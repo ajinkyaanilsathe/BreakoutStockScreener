@@ -15,7 +15,6 @@ from config import STOCK_UNIVERSE, STRATEGY_PARAMS, MARKET_REGIME_SYMBOL
 from src.data_fetcher import fetch_market_index, fetch_stock_data
 from src.indicators import add_indicators
 from src.screener import run_screener, analyze_stock
-from src.backtester import run_backtest
 
 # ── page config ───────────────────────────────────────────────────────────────
 
@@ -271,26 +270,6 @@ def _to_excel_bytes(sheets: dict) -> bytes:
     return buf.getvalue()
 
 
-def _build_equity_curve(trades_df: pd.DataFrame) -> go.Figure:
-    fig = go.Figure()
-    fig.add_trace(go.Scatter(
-        x=trades_df["entry_date"].astype(str),
-        y=trades_df["cumulative_return"],
-        line=dict(color="#00C896", width=2),
-        fill="tozeroy",
-        fillcolor="rgba(0,200,150,0.1)",
-        name="Cumulative Return %",
-    ))
-    fig.update_layout(
-        height=280, template="plotly_dark",
-        paper_bgcolor="#0E1117", plot_bgcolor="#0E1117",
-        margin=dict(l=10, r=10, t=10, b=10),
-        xaxis=dict(gridcolor="#1E2130"),
-        yaxis=dict(gridcolor="#1E2130", ticksuffix="%"),
-    )
-    return fig
-
-
 # ── sidebar ───────────────────────────────────────────────────────────────────
 
 with st.sidebar:
@@ -363,7 +342,7 @@ st.divider()
 
 # ── tabs ──────────────────────────────────────────────────────────────────────
 
-tab1, tab2, tab3, tab4, tab5 = st.tabs(["🏠 Dashboard", "🔍 Screener", "📊 Stock Analysis", "📉 Backtest", "⭐ Best Buy"])
+tab1, tab2, tab3, tab4 = st.tabs(["🏠 Dashboard", "🔍 Screener", "📊 Stock Analysis", "⭐ Best Buy"])
 
 # ─── TAB 1: Dashboard ─────────────────────────────────────────────────────────
 
@@ -384,7 +363,6 @@ with tab1:
 2. Stocks scoring ≥ threshold with good R:R appear in the table
 3. Click any stock row then open **📊 Stock Analysis** for the chart
 4. Check **entry price · target · stop-loss** before trading
-5. **📉 Backtest** shows historical win-rate of the strategy
 
 **Scoring breakdown (v3)**
 | Component | Max |
@@ -775,225 +753,9 @@ with tab3:
                 st.markdown(f"**Total: {result['score']}/100**")
                 st.markdown(f"*{result['reasons']}*")
 
-# ─── TAB 4: Backtest ──────────────────────────────────────────────────────────
+# ─── TAB 4: Best Buy ──────────────────────────────────────────────────────────
 
 with tab4:
-    st.subheader("Strategy Backtest (2-Year Historical Simulation)")
-    st.markdown(
-        "Simulates the breakout strategy on historical data. "
-        "Each signal triggers a trade: **exit on +6% target, –5% stop-loss, or after 44 trading days (~2 months)**. "
-        "Only trades when **Nifty is above its 200-MA** and **≥6 out of 10 signals** are active."
-    )
-
-    sample_size = st.slider("Stocks to sample", 10, min(50, len(STOCK_UNIVERSE)), 25, step=5)
-    bt_btn = st.button("▶ Run Backtest", type="primary")
-
-    if bt_btn:
-        with st.spinner(f"Backtesting on {sample_size} stocks × 2 years of history…"):
-            bt = run_backtest(STOCK_UNIVERSE, custom_params, sample_size=sample_size)
-        st.session_state["backtest_result"] = bt
-
-    bt = st.session_state.get("backtest_result")
-
-    if bt:
-        b1, b2, b3, b4, b5, b6, b7 = st.columns(7)
-        b1.metric("Total Trades", bt["total_trades"])
-        b2.metric("Win Rate", f"{bt['win_rate']}%")
-        b3.metric("Avg Win", f"+{bt['avg_win']}%")
-        b4.metric("Avg Loss", f"{bt['avg_loss']}%")
-        b5.metric("Avg Return/Trade", f"{bt['avg_return']}%")
-        b6.metric("Expectancy", f"{bt['expectancy']}%")
-        b7.metric("Avg Hold", f"{bt.get('avg_hold_days', 0):.0f}d")
-
-        st.divider()
-
-        # Outcome distribution
-        col_pie, col_eq = st.columns([1, 2])
-        with col_pie:
-            st.markdown("#### Outcome Distribution")
-            labels = ["Target Hit", "UT Sell Exit", "Trail Stop", "Stop Loss", "Time Exit"]
-            values = [bt.get("target_hit", 0), bt.get("ut_sell_exit", 0), bt.get("trail_stop_hit", 0), bt.get("stop_loss_hit", 0), bt.get("time_exit", 0)]
-            pie_fig = go.Figure(go.Pie(
-                labels=labels, values=values,
-                marker_colors=["#00C896", "#00E5FF", "#00BFFF", "#FF4B4B", "#FFA500"],
-                hole=0.45,
-                textinfo="label+percent",
-            ))
-            pie_fig.update_layout(
-                height=240, template="plotly_dark",
-                paper_bgcolor="#0E1117",
-                margin=dict(l=10, r=10, t=10, b=10),
-                showlegend=False,
-            )
-            st.plotly_chart(pie_fig)
-
-        with col_eq:
-            st.markdown("#### Cumulative Return (Equal-Weight, All Trades)")
-            st.plotly_chart(_build_equity_curve(bt["trades"]))
-
-        st.divider()
-
-        # ── Peak Return Analysis ───────────────────────────────────────────
-        st.markdown("#### 📈 Peak Return Analysis — What If You Held Longer?")
-        st.caption(
-            "For every trade, we tracked the highest price the stock reached within 90 trading days "
-            "from entry — regardless of when/how the trade was actually exited."
-        )
-
-        pk1, pk2, pk3 = st.columns(3)
-        pk1.metric(
-            "Avg Actual Exit",
-            f"{bt['avg_return']:+.2f}%",
-            help="Average P&L at the actual exit point (target / SL / time exit)",
-        )
-        pk2.metric(
-            "Avg Peak Return",
-            f"{bt['avg_peak_return']:+.2f}%",
-            f"+{bt['avg_left_on_table']:.2f}% left on table",
-            help="Average highest return the stock reached within 90 days of entry",
-        )
-        pk3.metric(
-            "Avg Days to Peak",
-            f"{bt['avg_days_to_peak']:.0f} days",
-            help="On average, how many trading days after entry the stock hit its peak",
-        )
-
-        # Scatter: actual exit % vs peak % per trade
-        tdf = bt["trades"]
-        outcome_color_map = {"TARGET_HIT": "#00C896", "UT_SELL": "#00E5FF", "TRAIL_STOP": "#00BFFF", "STOP_LOSS": "#FF4B4B", "TIME_EXIT": "#FFA500"}
-        colors = [outcome_color_map.get(o, "#aaa") for o in tdf["outcome"]]
-
-        def _hover(row):
-            return (
-                f"{row['symbol']}<br>"
-                f"Entry: {row['entry_date']}<br>"
-                f"Exit: {row['pnl_pct']:+.1f}%<br>"
-                f"Peak: {row['peak_return_pct']:+.1f}%<br>"
-                f"Days to peak: {int(row['days_to_peak'])}"
-            )
-
-        scatter_fig = go.Figure()
-        for outcome, color in outcome_color_map.items():
-            mask = tdf["outcome"] == outcome
-            subset = tdf[mask]
-            scatter_fig.add_trace(go.Scatter(
-                x=subset["pnl_pct"],
-                y=subset["peak_return_pct"],
-                mode="markers",
-                marker=dict(color=color, size=7, opacity=0.75),
-                name=outcome.replace("_", " ").title(),
-                text=subset.apply(_hover, axis=1),
-                hovertemplate="%{text}<extra></extra>",
-            ))
-
-        # Diagonal reference line (peak = actual exit)
-        lim = max(tdf["peak_return_pct"].max(), tdf["pnl_pct"].max(), 10)
-        scatter_fig.add_trace(go.Scatter(
-            x=[-20, lim], y=[-20, lim],
-            mode="lines",
-            line=dict(color="gray", dash="dot", width=1),
-            name="Peak = Exit (no gain from holding)",
-            showlegend=True,
-        ))
-
-        scatter_fig.update_layout(
-            height=380, template="plotly_dark",
-            paper_bgcolor="#0E1117", plot_bgcolor="#0E1117",
-            xaxis=dict(title="Actual Exit Return %", gridcolor="#1E2130", zeroline=True, zerolinecolor="#444"),
-            yaxis=dict(title="Peak Return % (90-day window)", gridcolor="#1E2130", zeroline=True, zerolinecolor="#444"),
-            legend=dict(orientation="h", y=1.08),
-            margin=dict(l=10, r=10, t=30, b=10),
-        )
-        st.plotly_chart(scatter_fig)
-        st.caption("Points **above the dotted line** = stock had more upside after the exit point. Hover for details.")
-
-        st.divider()
-
-        # ── Trade Log ─────────────────────────────────────────────────────
-        st.markdown(f"#### Trade Log *(from {bt['symbols_tested']} stocks)*")
-        trades_show = bt["trades"][[
-            "symbol", "entry_date", "entry_price", "exit_price",
-            "exit_day", "hold_budget", "outcome", "pnl_pct", "peak_return_pct", "days_to_peak", "left_on_table"
-        ]].copy()
-        trades_show.columns = [
-            "Symbol", "Entry Date", "Entry ₹", "Exit ₹",
-            "Days Held", "Budget", "Outcome", "P&L %", "Peak %", "Days to Peak", "Left on Table %"
-        ]
-
-        def style_outcome(val):
-            if val == "TARGET_HIT":  return "color: #00C896; font-weight:700"
-            if val == "UT_SELL":     return "color: #00E5FF; font-weight:700"
-            if val == "TRAIL_STOP":  return "color: #00BFFF"
-            if val == "STOP_LOSS":   return "color: #FF4B4B; font-weight:700"
-            return "color: #FFA500"
-
-        def style_pnl(val):
-            return "color: #00C896" if val > 0 else "color: #FF4B4B"
-
-        def style_peak(val):
-            if val >= 20: return "color: #00C896; font-weight:700"
-            if val >= 10: return "color: #00C896"
-            if val > 0:   return "color: #aaa"
-            return "color: #FF4B4B"
-
-        styled_trades = (
-            trades_show.style
-            .map(style_outcome, subset=["Outcome"])
-            .map(style_pnl, subset=["P&L %"])
-            .map(style_peak, subset=["Peak %"])
-            .map(style_pnl, subset=["Left on Table %"])
-            .format({
-                "P&L %": "{:+.2f}%",
-                "Peak %": "{:+.2f}%",
-                "Left on Table %": "{:+.2f}%",
-                "Entry ₹": "{:,.2f}",
-                "Exit ₹": "{:,.2f}",
-                "Days to Peak": "{:.0f}",
-                "Days Held": "{:.0f}",
-                "Budget": "{:.0f}d",
-            })
-        )
-        st.dataframe(styled_trades, height=380)
-
-        _bt_col, _ = st.columns([1, 4])
-        with _bt_col:
-            _bt_summary = pd.DataFrame([{
-                "Total Trades": bt["total_trades"],
-                "Win Rate %": bt["win_rate"],
-                "Avg Win %": bt["avg_win"],
-                "Avg Loss %": bt["avg_loss"],
-                "Avg Return %": bt["avg_return"],
-                "Expectancy %": bt["expectancy"],
-                "Target Hit": bt.get("target_hit", 0),
-                "UT Sell Exit": bt.get("ut_sell_exit", 0),
-                "Trail Stop": bt.get("trail_stop_hit", 0),
-                "Stop Loss Hit": bt.get("stop_loss_hit", 0),
-                "Time Exit": bt.get("time_exit", 0),
-                "Symbols Tested": bt["symbols_tested"],
-                "Avg Hold Days": bt.get("avg_hold_days", 0),
-                "Avg Peak Return %": bt.get("avg_peak_return", 0),
-                "Avg Left on Table %": bt.get("avg_left_on_table", 0),
-            }])
-            st.download_button(
-                label="📥 Export to Excel",
-                data=_to_excel_bytes({
-                    "Trade Log": trades_show.reset_index(drop=True),
-                    "Summary": _bt_summary,
-                }),
-                file_name=f"backtest_{date.today()}.xlsx",
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            )
-
-        st.caption(
-            "⚠️ Past performance does not guarantee future results. "
-            "This backtest does not account for slippage, brokerage, or taxes."
-        )
-    else:
-        st.info("Click **Run Backtest** to simulate the strategy on 2 years of historical data.")
-
-# ─── TAB 5: Best Buy ──────────────────────────────────────────────────────────
-
-with tab5:
     st.subheader("⭐ Best Buy — Top Conviction Picks")
     st.markdown(
         "Curated shortlist from the screener ranked by **conviction score** — "
