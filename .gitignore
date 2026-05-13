@@ -1,0 +1,29 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+
+# Local file cache (regenerated at runtime)
+.cache/
+
+# Log files
+logs/
+
+# Claude Code local settings
+.claude/
+
+# Exported reports
+*.xlsx
+
+# Environment secrets
+.env
+.env.local
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db

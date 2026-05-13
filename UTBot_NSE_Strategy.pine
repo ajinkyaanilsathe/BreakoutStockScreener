@@ -1,0 +1,280 @@
+//@version=5
+strategy(
+    title                   = "UT Bot Breakout Strategy — NSE",
+    shorttitle              = "UT Bot NSE",
+    overlay                 = true,
+    initial_capital         = 100000,
+    currency                = currency.INR,
+    default_qty_type        = strategy.percent_of_equity,
+    default_qty_value       = 10,
+    commission_type         = strategy.commission.percent,
+    commission_value        = 0.1,
+    slippage                = 2,
+    process_orders_on_close = false
+)
+
+// ══════════════════════════════════════════════════════════════════════════════
+//  INPUTS
+// ══════════════════════════════════════════════════════════════════════════════
+
+atrLen   = input.int  (10,   "ATR Length",              minval=1,   group="UT Bot")
+atrMult  = input.float(2.0,  "ATR Multiplier",          minval=0.1, step=0.1, group="UT Bot")
+
+useRSI   = input.bool (true, "RSI Zone Filter",         group="Signal Filters")
+rsiMin   = input.int  (50,   "  RSI Min",  minval=30,   group="Signal Filters")
+rsiMax   = input.int  (72,   "  RSI Max",  maxval=85,   group="Signal Filters")
+useMACD  = input.bool (true, "MACD Bullish",             group="Signal Filters")
+useADX   = input.bool (true, "ADX Trend Strength",       group="Signal Filters")
+adxMin   = input.int  (20,   "  ADX Min",  minval=10,   group="Signal Filters")
+useMA    = input.bool (true, "MA Stack (20/50/150)",     group="Signal Filters")
+useVol   = input.bool (true, "Volume Surge",             group="Signal Filters")
+volMult  = input.float(1.5,  "  Min Rel Volume", minval=1.0, step=0.1, group="Signal Filters")
+
+tgtPct   = input.float(6.0,  "Target %",          minval=1.0, step=0.5, group="Risk Management")
+slPct    = input.float(5.0,  "Max Stop Loss %",   minval=0.5, step=0.5, group="Risk Management")
+atrSLMul = input.float(2.0,  "ATR SL Multiplier", minval=0.5, step=0.1, group="Risk Management")
+
+showStop = input.bool(true,  "Show Trailing Stop Line",  group="Visuals")
+showSigs = input.bool(true,  "Show Buy/Sell Labels",     group="Visuals")
+showFill = input.bool(true,  "Phase Background Shading", group="Visuals")
+showMAs  = input.bool(true,  "Show MA Lines",            group="Visuals")
+
+
+// ══════════════════════════════════════════════════════════════════════════════
+//  UT BOT TRAILING STOP
+//  Exact translation of indicators.py lines 246-266.
+//  Rising trend  → stop ratchets UP  (locks in gains, never gives back)
+//  Falling trend → stop ratchets DOWN (follows price lower)
+//  Trend flip    → stop resets to price ± n_loss
+// ══════════════════════════════════════════════════════════════════════════════
+
+nLoss = atrMult * ta.atr(atrLen)
+var float utStop = na
+
+if na(utStop[1])
+    utStop := close - nLoss
+else if close > utStop[1] and close[1] > utStop[1]
+    utStop := math.max(utStop[1], close - nLoss)
+else if close < utStop[1] and close[1] < utStop[1]
+    utStop := math.min(utStop[1], close + nLoss)
+else if close > utStop[1]
+    utStop := close - nLoss
+else
+    utStop := close + nLoss
+
+// Fires exactly ONCE per crossover — same as Python UT_Buy / UT_Sell columns
+utBuy     = close > utStop and close[1] <= utStop[1]
+utSell    = close < utStop and close[1] >= utStop[1]
+bullPhase = close > utStop
+
+
+// ══════════════════════════════════════════════════════════════════════════════
+//  INDICATOR FILTERS
+// ══════════════════════════════════════════════════════════════════════════════
+
+rsi    = ta.rsi(close, 14)
+rsiOk  = not useRSI  or (rsi >= rsiMin and rsi <= rsiMax)
+
+[macdL, macdS, macdH] = ta.macd(close, 12, 26, 9)
+macdOk = not useMACD or (macdL > macdS and macdH > 0)
+
+[diPlus, diMinus, adxVal] = ta.dmi(14, 14)
+adxOk  = not useADX  or adxVal >= adxMin
+
+ma20  = ta.sma(close, 20)
+ma50  = ta.sma(close, 50)
+ma150 = ta.sma(close, 150)
+maOk  = not useMA   or (close > ma20 and close > ma50 and close > ma150)
+
+volMa20 = ta.sma(volume, 20)
+relVol  = volume / volMa20
+volOk   = not useVol or relVol >= volMult
+
+allFiltersOk = rsiOk and macdOk and adxOk and maOk and volOk
+
+
+// ══════════════════════════════════════════════════════════════════════════════
+//  ENTRY LOGIC
+// ══════════════════════════════════════════════════════════════════════════════
+
+longEntry = utBuy and allFiltersOk
+
+atr14 = ta.atr(14)
+
+var float slPx        = na
+var float tgtPx       = na
+var int   entryBarIdx = na
+
+if longEntry and strategy.position_size == 0
+    atrSLPx     = close - atrSLMul * atr14
+    pctSLPx     = close * (1.0 - slPct / 100.0)
+    slPx       := math.max(atrSLPx, pctSLPx)       // tightest (highest) price = smallest risk
+    tgtPx      := close * (1.0 + tgtPct / 100.0)
+    entryBarIdx := bar_index
+    strategy.entry("Long", strategy.long, comment="UT Buy")
+
+
+// ══════════════════════════════════════════════════════════════════════════════
+//  EXIT MANAGEMENT  (called every bar while in trade — updates stop dynamically)
+//  Mirrors backtester.py trailing stop logic (lines 136-140):
+//    >= +4% gain  → trail at 2% below peak high
+//    >= +3% gain  → move stop to breakeven
+//    default      → use initial ATR/% stop
+// ══════════════════════════════════════════════════════════════════════════════
+
+var float peakHigh   = na
+var float trailSL    = na
+var bool  trailActive = false
+
+if strategy.position_size > 0
+    entryPx    = strategy.opentrades.entry_price(0)
+    peakHigh  := na(peakHigh) ? high : math.max(peakHigh, high)
+    gainPct    = (peakHigh - entryPx) / entryPx * 100
+
+    if gainPct >= 4.0
+        trailActive := true
+        trailSL    := math.max(nz(trailSL, 0.0), peakHigh * 0.98)
+
+    // Single strategy.exit call — stop level updates each bar
+    effectiveSL = trailActive ? trailSL : gainPct >= 3.0 ? entryPx : nz(slPx, close * 0.95)
+    strategy.exit("Exit", from_entry="Long",
+                  limit=tgtPx, stop=effectiveSL,
+                  comment_profit="Target Hit",
+                  comment_loss="Stop Hit")
+else
+    peakHigh    := na
+    trailSL     := na
+    trailActive := false
+
+// UT Sell → close trade (skip first 3 bars: noise filter from backtester.py line 144)
+barsSinceEntry = na(entryBarIdx) ? 999 : bar_index - entryBarIdx
+if utSell and strategy.position_size > 0 and barsSinceEntry >= 3
+    strategy.close("Long", comment="UT Sell")
+
+// Reset entryBarIdx when position closes naturally (target / stop hit)
+if strategy.position_size[1] > 0 and strategy.position_size == 0
+    entryBarIdx := na
+
+
+// ══════════════════════════════════════════════════════════════════════════════
+//  PLOTS
+// ══════════════════════════════════════════════════════════════════════════════
+
+stopClr = bullPhase ? color.new(color.lime, 15) : color.new(color.red, 15)
+plot(showStop ? utStop : na, "UT Trailing Stop", color=stopClr, linewidth=2)
+
+bgcolor(showFill ? (bullPhase ? color.new(color.teal, 92) : color.new(color.red, 93)) : na)
+
+plot(showMAs ? ma20  : na, "MA 20",  color=color.new(color.yellow,  0), linewidth=1)
+plot(showMAs ? ma50  : na, "MA 50",  color=color.new(color.blue,    0), linewidth=1)
+plot(showMAs ? ma150 : na, "MA 150", color=color.new(color.fuchsia, 0), linewidth=1)
+
+// Small grey dot = UT Buy fired but filters blocked it
+plotshape(series=showSigs and utBuy and not longEntry,
+          title="Raw UT Buy (unconfirmed)",
+          style=shape.circle,
+          location=location.belowbar,
+          color=color.new(color.gray, 40),
+          size=size.tiny)
+
+// Orange down arrow = UT Sell crossover
+plotshape(series=showSigs and utSell,
+          title="UT Sell",
+          style=shape.triangledown,
+          location=location.abovebar,
+          color=color.new(color.orange, 10),
+          size=size.small)
+
+// Large green up arrow = all signals confirmed, strategy enters
+plotshape(series=longEntry,
+          title="Confirmed Entry",
+          style=shape.triangleup,
+          location=location.belowbar,
+          color=color.new(color.lime, 0),
+          size=size.normal)
+
+
+// ══════════════════════════════════════════════════════════════════════════════
+//  LIVE STATUS TABLE
+//  Pre-compute all display strings before table.cell calls to avoid
+//  multi-line ternaries inside function arguments (Pine Script parse error).
+// ══════════════════════════════════════════════════════════════════════════════
+
+// Signal row text + color
+sigTxt  = longEntry ? "BUY NOW" : utBuy ? "UT Buy (filter fail)" : utSell ? "UT SELL" : "---"
+sigClr  = longEntry ? color.lime : utBuy ? color.orange : utSell ? color.red : color.gray
+
+// RSI row
+rsiTxt  = str.tostring(rsi, "0.0") + (not useRSI ? " off" : rsiOk ? " OK" : " FAIL")
+rsiClr  = not useRSI ? color.gray  : rsiOk ? color.lime : color.red
+
+// MACD row
+macdTxt = not useMACD ? "off" : macdOk ? "Bull OK" : "Bear FAIL"
+macdClr = not useMACD ? color.gray : macdOk ? color.lime : color.red
+
+// ADX row
+adxTxt  = str.tostring(adxVal, "0.0") + (not useADX ? " off" : adxOk ? " OK" : " FAIL")
+adxClr  = not useADX ? color.gray : adxOk ? color.lime : color.red
+
+// MA row
+maTxt   = not useMA ? "off" : maOk ? "Aligned" : "Weak"
+maClr   = not useMA ? color.gray : maOk ? color.lime : color.red
+
+// Volume row
+volTxt  = str.tostring(relVol, "0.00") + "x" + (not useVol ? " off" : volOk ? " OK" : " FAIL")
+volClr  = not useVol ? color.gray : volOk ? color.lime : color.red
+
+// Filter summary
+filtTxt = allFiltersOk ? "PASS" : "FAIL"
+filtClr = allFiltersOk ? color.lime : color.orange
+
+// Trail stop row
+trlTxt  = trailActive and not na(trailSL) ? str.tostring(trailSL, format.mintick) + " (on)" : "---"
+trlClr  = trailActive ? color.aqua : color.gray
+
+var table tbl = table.new(position.top_right, 2, 11,
+     bgcolor=color.new(color.black, 60),
+     border_color=color.new(color.gray, 50),
+     border_width=1,
+     frame_color=color.new(color.gray, 50),
+     frame_width=1)
+
+if barstate.islast
+    table.cell(tbl, 0, 0, "UT Bot NSE",
+               text_color=color.white, text_size=size.normal,
+               bgcolor=color.new(color.navy, 25))
+    table.cell(tbl, 1, 0, bullPhase ? "BULL" : "BEAR",
+               text_color=bullPhase ? color.lime : color.red,
+               text_size=size.normal, bgcolor=color.new(color.navy, 25))
+
+    table.cell(tbl, 0, 1, "UT Stop",    text_color=color.silver, text_size=size.small)
+    table.cell(tbl, 1, 1, str.tostring(utStop, format.mintick),
+               text_color=color.yellow, text_size=size.small)
+
+    table.cell(tbl, 0, 2, "RSI (14)",   text_color=color.silver, text_size=size.small)
+    table.cell(tbl, 1, 2, rsiTxt,       text_color=rsiClr,       text_size=size.small)
+
+    table.cell(tbl, 0, 3, "MACD",       text_color=color.silver, text_size=size.small)
+    table.cell(tbl, 1, 3, macdTxt,      text_color=macdClr,      text_size=size.small)
+
+    table.cell(tbl, 0, 4, "ADX (14)",   text_color=color.silver, text_size=size.small)
+    table.cell(tbl, 1, 4, adxTxt,       text_color=adxClr,       text_size=size.small)
+
+    table.cell(tbl, 0, 5, "MA Stack",   text_color=color.silver, text_size=size.small)
+    table.cell(tbl, 1, 5, maTxt,        text_color=maClr,        text_size=size.small)
+
+    table.cell(tbl, 0, 6, "Rel Vol",    text_color=color.silver, text_size=size.small)
+    table.cell(tbl, 1, 6, volTxt,       text_color=volClr,       text_size=size.small)
+
+    table.cell(tbl, 0, 7, "All Filters",text_color=color.silver, text_size=size.small)
+    table.cell(tbl, 1, 7, filtTxt,      text_color=filtClr,      text_size=size.small)
+
+    table.cell(tbl, 0, 8, "Signal",     text_color=color.silver, text_size=size.small)
+    table.cell(tbl, 1, 8, sigTxt,       text_color=sigClr,       text_size=size.small)
+
+    table.cell(tbl, 0, 9,  "Trail SL",  text_color=color.silver, text_size=size.small)
+    table.cell(tbl, 1, 9,  trlTxt,      text_color=trlClr,       text_size=size.small)
+
+    table.cell(tbl, 0, 10, "Open Trades", text_color=color.silver, text_size=size.small)
+    table.cell(tbl, 1, 10, str.tostring(strategy.opentrades),
+               text_color=color.white, text_size=size.small)

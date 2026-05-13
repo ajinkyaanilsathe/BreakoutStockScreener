@@ -1,0 +1,496 @@
+//@version=6
+strategy("NSE Breakout Screener Strategy", shorttitle="NSE Screener",
+    overlay           = true,
+    initial_capital   = 100000,
+    default_qty_type  = strategy.percent_of_equity,
+    default_qty_value = 10,
+    commission_type   = strategy.commission.percent,
+    commission_value  = 0.1,
+    slippage          = 2)
+
+// ══════════════════════════════════════════════════════════════════════════════
+//  INPUTS
+// ══════════════════════════════════════════════════════════════════════════════
+
+// ── Screener Gates ────────────────────────────────────────────────────────────
+minScore  = input.int  (45,   "Min Score (0–120)",         minval=0,          group="Screener Gates")
+minSigs   = input.int  (7,    "Min Signals (0–18)",        minval=0,          group="Screener Gates")
+minRR     = input.float(1.5,  "Min R:R Ratio",             minval=0.5, step=0.1, group="Screener Gates")
+bullGate  = input.bool (true, "Bull Market Gate (Nifty > 200-MA)",
+            tooltip="No entries when Nifty 50 is below its 200-MA.",           group="Screener Gates")
+
+// ── Signal Toggles ────────────────────────────────────────────────────────────
+useNear52W    = input.bool(true, "Near 52W High",                    group="Signal Toggles")
+useAbovePH    = input.bool(true, "Above Prev Day High",              group="Signal Toggles")
+useVolSurge   = input.bool(true, "Volume Surge",                     group="Signal Toggles")
+useRSI        = input.bool(true, "RSI Zone (50–72)",                 group="Signal Toggles")
+useMACD       = input.bool(true, "MACD Bullish",                     group="Signal Toggles")
+useAboveMA20  = input.bool(true, "Price > MA20",                     group="Signal Toggles")
+useAboveMA50  = input.bool(true, "Price > MA50",                     group="Signal Toggles")
+useAboveMA150 = input.bool(true, "Price > MA150 (Stage 2)",          group="Signal Toggles")
+useADX        = input.bool(true, "ADX Strong",                       group="Signal Toggles")
+useBBBreak    = input.bool(true, "Bollinger Breakout",               group="Signal Toggles")
+useMom        = input.bool(true, "5-Day ROC > 1%",                   group="Signal Toggles")
+useRSNifty    = input.bool(true, "RS vs Nifty (20d)",                group="Signal Toggles")
+useTightBase  = input.bool(true, "Tight Base / BB Squeeze",          group="Signal Toggles")
+useStrongClose= input.bool(true, "Strong Close (top 35% of range)",  group="Signal Toggles")
+useVolTrend   = input.bool(true, "Volume Accumulation (5d > 20d)",   group="Signal Toggles")
+useWeekly     = input.bool(true, "Weekly Trend (W-MA20 + W-RSI>50)", group="Signal Toggles")
+useCandle     = input.bool(true, "Bullish Candle Pattern",           group="Signal Toggles")
+useVCP        = input.bool(true, "VCP — 3 Contracting Swings",       group="Signal Toggles")
+useUTBot      = input.bool(true, "UT Bot Confirmed Buy",             group="Signal Toggles")
+
+// ── Thresholds ────────────────────────────────────────────────────────────────
+rsiMin      = input.int  (50,    "RSI Min",           minval=30,           group="Thresholds")
+rsiMax      = input.int  (72,    "RSI Max",           maxval=85,           group="Thresholds")
+adxMin      = input.int  (20,    "ADX Min",           minval=10,           group="Thresholds")
+volMult     = input.float(1.5,   "Min Rel Volume",    minval=1.0, step=0.1, group="Thresholds")
+pct52W      = input.float(-15.0, "Max % from 52W High", maxval=0.0, step=0.5,
+              tooltip="e.g. -15 = within 15% of 52W high",                  group="Thresholds")
+
+// ── UT Bot ────────────────────────────────────────────────────────────────────
+atrLen         = input.int  (10,   "ATR Length",            minval=1,           group="UT Bot")
+atrMult        = input.float(2.0,  "ATR Multiplier",        minval=0.1, step=0.1, group="UT Bot")
+lookbackBars   = input.int  (252,  "Lookback Window (bars)", minval=50,
+                 tooltip="252 bars ≈ 1 trading year, matching Python yfinance period='1y'.", group="UT Bot")
+requireConfirm = input.bool (true, "Require Confirmation Bar",
+                 tooltip="Enter only when bar AFTER crossover also closes above UT Stop.",   group="UT Bot")
+
+// ── Risk Management ───────────────────────────────────────────────────────────
+slPct    = input.float(5.0, "Max Stop Loss %",   minval=0.5, step=0.5, group="Risk Management")
+atrSLMul = input.float(2.0, "ATR SL Multiplier", minval=0.5, step=0.1, group="Risk Management")
+
+// ── Visuals ───────────────────────────────────────────────────────────────────
+showStop  = input.bool(true, "Show UT Trailing Stop",    group="Visuals")
+showMAs   = input.bool(true, "Show MA20 / MA50 / MA150", group="Visuals")
+showFill  = input.bool(true, "Phase Background Shading", group="Visuals")
+showTable = input.bool(true, "Show Status Table",         group="Visuals")
+
+
+// ══════════════════════════════════════════════════════════════════════════════
+//  CORE INDICATORS
+// ══════════════════════════════════════════════════════════════════════════════
+
+atr14 = ta.atr(14)
+rsi   = ta.rsi(close, 14)
+
+[macdL, macdS, macdH] = ta.macd(close, 12, 26, 9)
+[diPlus, diMinus, adxVal] = ta.dmi(14, 14)
+[bbUpper, bbBasis, bbLower] = ta.bb(close, 20, 2)
+bbWidth = (bbUpper - bbLower) / bbBasis
+
+ma20  = ta.sma(close, 20)
+ma50  = ta.sma(close, 50)
+ma150 = ta.sma(close, 150)
+ma200 = ta.sma(close, 200)
+
+volMa20 = ta.sma(volume, 20)
+volMa5  = ta.sma(volume, 5)
+relVol  = volume / volMa20
+
+high52w       = ta.highest(high, 252)
+pctFrom52wHigh = (close - high52w) / high52w * 100
+
+roc5  = (close / close[5]  - 1.0) * 100.0
+roc20 = (close / close[20] - 1.0) * 100.0
+
+dayRange      = high - low
+closePctRange = dayRange > 0 ? (close - low) / dayRange : 0.5
+
+
+// ══════════════════════════════════════════════════════════════════════════════
+//  UT BOT TRAILING STOP  (252-bar lookback window — matches Python yfinance 1y)
+// ══════════════════════════════════════════════════════════════════════════════
+
+nLoss = atrMult * ta.atr(atrLen)
+var float utStop = na
+
+withinWindow = bar_index >= last_bar_index - lookbackBars
+freshStart   = withinWindow and (na(utStop[1]) or not withinWindow[1])
+
+if not withinWindow
+    utStop := na
+else if freshStart
+    utStop := close - nLoss
+else if close > utStop[1] and close[1] > utStop[1]
+    utStop := math.max(utStop[1], close - nLoss)
+else if close < utStop[1] and close[1] < utStop[1]
+    utStop := math.min(utStop[1], close + nLoss)
+else if close > utStop[1]
+    utStop := close - nLoss
+else
+    utStop := close + nLoss
+
+bullPhase = not na(utStop) and close > utStop
+
+// Raw crossover (fires on exact bar)
+utBuyRaw = not na(utStop) and not na(utStop[1]) and close > utStop and close[1] <= utStop[1]
+utSell   = not na(utStop) and not na(utStop[1]) and close < utStop and close[1] >= utStop[1]
+
+// Confirmed crossover (prev bar crossed, today still above — avoids false breakouts)
+utBuyConfirmed = not na(utStop) and not na(utStop[1]) and not na(utStop[2]) and
+                 close > utStop and close[1] > utStop[1] and close[2] <= utStop[2]
+
+effectiveUtBuy = requireConfirm ? utBuyConfirmed : utBuyRaw
+
+
+// ══════════════════════════════════════════════════════════════════════════════
+//  WEEKLY INDICATORS  (resampled from daily — forward-filled)
+// ══════════════════════════════════════════════════════════════════════════════
+
+wMA20 = request.security(syminfo.tickerid, "W", ta.sma(close, 20))
+wRSI  = request.security(syminfo.tickerid, "W", ta.rsi(close, 14))
+wClose = request.security(syminfo.tickerid, "W", close)
+weeklyTrend = wClose > wMA20 and wRSI > 50
+
+
+// ══════════════════════════════════════════════════════════════════════════════
+//  NIFTY 50 — BULL MARKET GATE + RS COMPARISON
+//  Symbol: "NSE:NIFTY" on TradingView (Nifty 50 index)
+// ══════════════════════════════════════════════════════════════════════════════
+
+niftyClose  = request.security("NSE:NIFTY", "D", close)
+niftyMA200  = request.security("NSE:NIFTY", "D", ta.sma(close, 200))
+niftyROC20  = request.security("NSE:NIFTY", "D", (close / close[20] - 1.0) * 100.0)
+isBullMarket = niftyClose > niftyMA200
+rsVsNifty    = roc20 > niftyROC20
+
+
+// ══════════════════════════════════════════════════════════════════════════════
+//  CANDLESTICK PATTERNS
+// ══════════════════════════════════════════════════════════════════════════════
+
+// Bullish Engulfing
+engulfing = close[1] < open[1] and close > open and close > open[1] and open < close[1]
+
+// Hammer: small body, long lower shadow ≥ 2× body, tiny upper shadow
+bodyAmt  = math.abs(close - open)
+lowerShadow = math.min(close, open) - low
+upperShadow = high - math.max(close, open)
+hammer = dayRange > 0 and bodyAmt < dayRange * 0.35 and lowerShadow >= bodyAmt * 2.0 and upperShadow <= bodyAmt * 0.5
+
+// Inside Bar Breakout
+insideBar   = high[1] <= high[2] and low[1] >= low[2]
+insideBreak = insideBar and close > high[1]
+
+// Signal fires today or yesterday
+candleSignal = engulfing or hammer or insideBreak or engulfing[1] or hammer[1]
+
+
+// ══════════════════════════════════════════════════════════════════════════════
+//  VCP APPROXIMATION  (3 contracting pivot-high swings + declining volume)
+// ══════════════════════════════════════════════════════════════════════════════
+
+isPivotHigh = high == ta.highest(high, 7)
+
+// Range at each of the last 3 pivot highs
+ph0Range = ta.valuewhen(isPivotHigh, high - ta.lowest(low, 7), 0)
+ph1Range = ta.valuewhen(isPivotHigh, high - ta.lowest(low, 7), 1)
+ph2Range = ta.valuewhen(isPivotHigh, high - ta.lowest(low, 7), 2)
+
+// Volume at each pivot
+ph0Vol = ta.valuewhen(isPivotHigh, ta.sma(volume, 5), 0)
+ph2Vol = ta.valuewhen(isPivotHigh, ta.sma(volume, 5), 2)
+
+vcpRanges = ph0Range < ph1Range and ph1Range < ph2Range
+vcpVol    = ph0Vol < ph2Vol
+vcp       = vcpRanges and vcpVol
+
+// Tight Base fallback: BB width in lower 40th percentile of last 60 bars
+bbWidthRank = ta.percentrank(bbWidth, 60)
+tightBase   = bbWidthRank <= 40.0 or vcp
+
+
+// ══════════════════════════════════════════════════════════════════════════════
+//  SIGNAL DETECTION  (20 signals — mirrors Python screener _detect_signals)
+// ══════════════════════════════════════════════════════════════════════════════
+
+s_near52w     = pctFrom52wHigh >= pct52W
+s_abovePH     = close > high[1]
+s_volSurge    = relVol >= volMult
+s_rsi         = rsi >= rsiMin and rsi <= rsiMax
+s_macd        = macdL > macdS and macdH > 0
+s_aboveMA20   = close > ma20
+s_aboveMA50   = close > ma50
+s_aboveMA150  = close > ma150
+s_adx         = adxVal >= adxMin
+s_bbBreak     = close >= bbUpper
+s_mom         = roc5 > 1.0
+s_rsNifty     = rsVsNifty
+s_tightBase   = tightBase
+s_strongClose = closePctRange > 0.65
+s_volTrend    = volMa5 > volMa20
+s_weekly      = weeklyTrend
+s_candle      = candleSignal
+s_vcp         = vcp
+s_utbot       = effectiveUtBuy
+
+
+// ══════════════════════════════════════════════════════════════════════════════
+//  SCORING  (0–120, mirrors Python _score function)
+//
+//  Volume      0–25 : scales with relVol
+//  Price Action 0–30 : 52W High, Prev High, BB Break, VCP / Tight Base
+//  Momentum    0–25 : RSI, MACD, ROC, RS, Candle
+//  Trend       0–20 : MA20, MA50, MA150, ADX, Weekly
+//  Entry Qual  0–20 : Strong Close, Vol Trend, UT Bot
+//  (Sector Leading +4 skipped — not available in Pine without external data)
+// ══════════════════════════════════════════════════════════════════════════════
+
+volScore   = math.min(25, math.max(0, math.floor((relVol - 1.0) * 18.0)))
+
+// Pine Script v6: arithmetic spanning multiple lines must use intermediate variables
+pa1        = s_near52w    ? 12 : 0
+pa2        = s_abovePH   ?  8 : 0
+pa3        = s_bbBreak   ?  5 : 0
+pa4        = s_vcp       ?  8 : s_tightBase ? 4 : 0
+paScore    = pa1 + pa2 + pa3 + pa4
+
+m1         = s_rsi     ?  7 : 0
+m2         = s_macd    ?  7 : 0
+m3         = s_mom     ?  4 : 0
+m4         = s_rsNifty ?  4 : 0
+m5         = s_candle  ?  3 : 0
+momScore   = m1 + m2 + m3 + m4 + m5
+
+t1         = s_aboveMA20  ? 4 : 0
+t2         = s_aboveMA50  ? 4 : 0
+t3         = s_aboveMA150 ? 4 : 0
+t4         = s_adx        ? 4 : 0
+t5         = s_weekly     ? 4 : 0
+trendScore = t1 + t2 + t3 + t4 + t5
+
+e1         = s_strongClose ? 6 : 0
+e2         = s_volTrend    ? 6 : 0
+e3         = s_utbot       ? 4 : 0
+eqScore    = e1 + e2 + e3
+
+totalScore = volScore + paScore + momScore + trendScore + eqScore
+
+// Signal count — split into groups to avoid line-continuation parse error
+sc1 = (useNear52W and s_near52w ? 1 : 0) + (useAbovePH and s_abovePH ? 1 : 0) + (useVolSurge and s_volSurge ? 1 : 0) + (useRSI and s_rsi ? 1 : 0) + (useMACD and s_macd ? 1 : 0)
+sc2 = (useAboveMA20 and s_aboveMA20 ? 1 : 0) + (useAboveMA50 and s_aboveMA50 ? 1 : 0) + (useAboveMA150 and s_aboveMA150 ? 1 : 0) + (useADX and s_adx ? 1 : 0) + (useBBBreak and s_bbBreak ? 1 : 0)
+sc3 = (useMom and s_mom ? 1 : 0) + (useRSNifty and s_rsNifty ? 1 : 0) + (useTightBase and s_tightBase ? 1 : 0) + (useStrongClose and s_strongClose ? 1 : 0) + (useVolTrend and s_volTrend ? 1 : 0)
+sc4 = (useWeekly and s_weekly ? 1 : 0) + (useCandle and s_candle ? 1 : 0) + (useVCP and s_vcp ? 1 : 0) + (useUTBot and s_utbot ? 1 : 0)
+sigCount = sc1 + sc2 + sc3 + sc4
+
+
+// ══════════════════════════════════════════════════════════════════════════════
+//  TARGET & STOP LOSS  (dynamic, mirrors Python _dynamic_target / _dynamic_sl)
+// ══════════════════════════════════════════════════════════════════════════════
+
+// Target: score-based % (6% / 8% / 10%), capped at 12% if near 52W high
+tgtMult   = totalScore >= 75 ? 1.10 : totalScore >= 60 ? 1.08 : 1.06
+tgtBase   = close * tgtMult
+tgtCapped = pctFrom52wHigh >= -3.0 ? math.min(tgtBase, close * 1.12) : tgtBase
+
+// Stop: tighter of 2×ATR or slPct%, then use utStop if it's tighter
+slAtrPx   = close - atrSLMul * atr14
+slPctPx   = close * (1.0 - slPct / 100.0)
+slBase    = math.max(slAtrPx, slPctPx)
+slEntry   = (not na(utStop) and utStop > slBase and utStop < close) ? utStop : slBase
+
+risk      = close - slEntry
+reward    = tgtCapped - close
+rrRatio   = risk > 0 ? reward / risk : 0.0
+
+
+// ══════════════════════════════════════════════════════════════════════════════
+//  ENTRY LOGIC  — all gates must pass
+// ══════════════════════════════════════════════════════════════════════════════
+
+bullOk  = not bullGate or isBullMarket
+scoreOk = totalScore >= minScore
+sigOk   = sigCount >= minSigs
+rrOk    = rrRatio >= minRR
+
+longEntry = bullOk and scoreOk and sigOk and rrOk and s_utbot and strategy.position_size == 0
+
+var float slPx        = na
+var float tgtPx       = na
+var int   entryBarIdx = na
+
+if longEntry
+    slPx        := slEntry
+    tgtPx       := tgtCapped
+    entryBarIdx := bar_index
+    strategy.entry("Long", strategy.long,
+                   comment="S:" + str.tostring(totalScore) + " R:" + str.tostring(rrRatio, "0.1"))
+
+
+// ══════════════════════════════════════════════════════════════════════════════
+//  EXIT MANAGEMENT
+//  ≥ +4% gain → trail at 2% below peak high
+//  ≥ +3% gain → move stop to breakeven
+//  default    → initial ATR / % stop
+// ══════════════════════════════════════════════════════════════════════════════
+
+var float peakHigh    = na
+var float trailSL     = na
+var bool  trailActive = false
+
+if strategy.position_size > 0
+    entryPx   = strategy.opentrades.entry_price(0)
+    peakHigh := na(peakHigh) ? high : math.max(peakHigh, high)
+    gainPct   = (peakHigh - entryPx) / entryPx * 100.0
+
+    if gainPct >= 4.0
+        trailActive := true
+        trailSL    := math.max(nz(trailSL, 0.0), peakHigh * 0.98)
+
+    effectiveExitSL = trailActive ? trailSL : gainPct >= 3.0 ? entryPx : nz(slPx, close * 0.95)
+    strategy.exit("Exit", from_entry="Long",
+                  limit=tgtPx, stop=effectiveExitSL,
+                  comment_profit="Target Hit",
+                  comment_loss="Stop Hit")
+else
+    peakHigh    := na
+    trailSL     := na
+    trailActive := false
+
+// UT Sell override — skip first 3 bars (noise filter)
+barsSinceEntry = na(entryBarIdx) ? 999 : bar_index - entryBarIdx
+if utSell and strategy.position_size > 0 and barsSinceEntry >= 3
+    strategy.close("Long", comment="UT Sell")
+
+if strategy.position_size[1] > 0 and strategy.position_size == 0
+    entryBarIdx := na
+
+
+// ══════════════════════════════════════════════════════════════════════════════
+//  PLOTS
+// ══════════════════════════════════════════════════════════════════════════════
+
+stopClr = bullPhase ? color.new(color.lime, 15) : color.new(color.red, 15)
+plot(showStop ? utStop : na, "UT Trailing Stop", color=stopClr, linewidth=2)
+
+bgcolor(showFill ? (bullPhase ? color.new(color.teal, 92) : color.new(color.red, 93)) : na)
+
+plot(showMAs ? ma20  : na, "MA 20",  color=color.new(color.yellow,  0), linewidth=1)
+plot(showMAs ? ma50  : na, "MA 50",  color=color.new(color.blue,    0), linewidth=1)
+plot(showMAs ? ma150 : na, "MA 150", color=color.new(color.fuchsia, 0), linewidth=1)
+
+// Grey dot = UT crossover that didn't trigger full entry
+plotshape(series=utBuyRaw and not longEntry,
+          title="Raw UT Buy (blocked)",
+          style=shape.circle, location=location.belowbar,
+          color=color.new(color.gray, 40), size=size.tiny)
+
+// Orange triangle = UT Sell crossover
+plotshape(series=utSell,
+          title="UT Sell",
+          style=shape.triangledown, location=location.abovebar,
+          color=color.new(color.orange, 10), size=size.small)
+
+// Green triangle = all gates passed, strategy enters
+plotshape(series=longEntry,
+          title="Screener Entry",
+          style=shape.triangleup, location=location.belowbar,
+          color=color.new(color.lime, 0), size=size.large)
+
+
+// ══════════════════════════════════════════════════════════════════════════════
+//  LIVE STATUS TABLE  (top-right)
+//  All strings pre-computed as variables — avoids parse errors from
+//  multi-line ternaries inside table.cell() arguments.
+// ══════════════════════════════════════════════════════════════════════════════
+
+// Row values pre-computed
+bmTxt   = isBullMarket ? "BULL" : "BEAR"
+bmClr   = isBullMarket ? color.lime : color.red
+
+scVal   = str.tostring(totalScore)
+scMin   = str.tostring(minScore)
+scTxt   = scVal + " / min " + scMin
+scClr   = totalScore >= 70 ? color.lime : totalScore >= 50 ? color.orange : color.red
+
+sgVal   = str.tostring(sigCount)
+sgMin   = str.tostring(minSigs)
+sgTxt   = sgVal + "/18  (need " + sgMin + ")"
+sgClr   = sigCount >= minSigs ? color.lime : color.orange
+
+rrTxt   = str.tostring(rrRatio, "0.00") + "x  (need " + str.tostring(minRR, "0.1") + "x)"
+rrClr   = rrRatio >= minRR ? color.lime : color.red
+
+brkTxt  = "Vol " + str.tostring(volScore) + " | PA " + str.tostring(paScore) + " | Mom " + str.tostring(momScore) + " | Tr " + str.tostring(trendScore) + " | EQ " + str.tostring(eqScore)
+
+rsiTxt  = str.tostring(rsi, "0.0") + (s_rsi  ? " OK"   : " FAIL")
+rsiClr  = s_rsi   ? color.lime : color.red
+
+macdTxt = s_macd  ? "Bull OK"   : "Bear FAIL"
+macdClr = s_macd  ? color.lime  : color.red
+
+adxTxt  = str.tostring(adxVal, "0.0") + (s_adx ? " OK" : " FAIL")
+adxClr  = s_adx   ? color.lime : color.red
+
+maTxt   = (s_aboveMA20 ? "20✓ " : "20✗ ") + (s_aboveMA50 ? "50✓ " : "50✗ ") + (s_aboveMA150 ? "150✓" : "150✗")
+maClr   = s_aboveMA20 and s_aboveMA50 and s_aboveMA150 ? color.lime : color.orange
+
+volTxt  = str.tostring(relVol, "0.00") + "x" + (s_volSurge ? " OK" : " FAIL")
+volClr  = s_volSurge  ? color.lime : color.red
+
+wkTxt   = s_weekly    ? "Bullish OK"  : "Weak FAIL"
+wkClr   = s_weekly    ? color.lime    : color.red
+
+utStopTxt = na(utStop) ? "—" : str.tostring(utStop, format.mintick)
+trlTxt  = trailActive and not na(trailSL) ? str.tostring(trailSL, format.mintick) + " (on)" : "---"
+trlClr  = trailActive ? color.aqua : color.gray
+
+_notBull    = not bullOk
+_notScore   = bullOk and not scoreOk
+_notSig     = bullOk and scoreOk and not sigOk
+_notRR      = bullOk and scoreOk and sigOk and not rrOk
+_notUT      = bullOk and scoreOk and sigOk and rrOk and not s_utbot
+sigEntryTxt = longEntry ? "▶ ENTRY NOW" : _notBull ? "Bear blocked" : _notScore ? "Score low" : _notSig ? "Signals low" : _notRR ? "R:R low" : _notUT ? "No UT Buy" : "---"
+sigEntryClr = longEntry ? color.lime : _notBull or _notUT ? color.red : color.orange
+
+var table tbl = table.new(position.top_right, 2, 15,
+    bgcolor=color.new(color.black, 55),
+    border_color=color.new(color.gray, 50), border_width=1,
+    frame_color=color.new(color.gray, 50),  frame_width=1)
+
+if barstate.islast and showTable
+    table.cell(tbl, 0, 0,  "NSE Screener",  text_color=color.white,  text_size=size.normal, bgcolor=color.new(color.navy, 20))
+    table.cell(tbl, 1, 0,  bmTxt,           text_color=bmClr,        text_size=size.normal, bgcolor=color.new(color.navy, 20))
+
+    table.cell(tbl, 0, 1,  "Score",         text_color=color.silver, text_size=size.small)
+    table.cell(tbl, 1, 1,  scTxt,           text_color=scClr,        text_size=size.small)
+
+    table.cell(tbl, 0, 2,  "Signals",       text_color=color.silver, text_size=size.small)
+    table.cell(tbl, 1, 2,  sgTxt,           text_color=sgClr,        text_size=size.small)
+
+    table.cell(tbl, 0, 3,  "R:R",           text_color=color.silver, text_size=size.small)
+    table.cell(tbl, 1, 3,  rrTxt,           text_color=rrClr,        text_size=size.small)
+
+    table.cell(tbl, 0, 4,  "Breakdown",     text_color=color.silver, text_size=size.small)
+    table.cell(tbl, 1, 4,  brkTxt,          text_color=color.white,  text_size=size.small)
+
+    table.cell(tbl, 0, 5,  "RSI (14)",      text_color=color.silver, text_size=size.small)
+    table.cell(tbl, 1, 5,  rsiTxt,          text_color=rsiClr,       text_size=size.small)
+
+    table.cell(tbl, 0, 6,  "MACD",          text_color=color.silver, text_size=size.small)
+    table.cell(tbl, 1, 6,  macdTxt,         text_color=macdClr,      text_size=size.small)
+
+    table.cell(tbl, 0, 7,  "ADX (14)",      text_color=color.silver, text_size=size.small)
+    table.cell(tbl, 1, 7,  adxTxt,          text_color=adxClr,       text_size=size.small)
+
+    table.cell(tbl, 0, 8,  "MA Stack",      text_color=color.silver, text_size=size.small)
+    table.cell(tbl, 1, 8,  maTxt,           text_color=maClr,        text_size=size.small)
+
+    table.cell(tbl, 0, 9,  "Rel Vol",       text_color=color.silver, text_size=size.small)
+    table.cell(tbl, 1, 9,  volTxt,          text_color=volClr,       text_size=size.small)
+
+    table.cell(tbl, 0, 10, "Weekly Trend",  text_color=color.silver, text_size=size.small)
+    table.cell(tbl, 1, 10, wkTxt,           text_color=wkClr,        text_size=size.small)
+
+    table.cell(tbl, 0, 11, "UT Stop",       text_color=color.silver, text_size=size.small)
+    table.cell(tbl, 1, 11, utStopTxt,       text_color=color.yellow, text_size=size.small)
+
+    table.cell(tbl, 0, 12, "Trail SL",      text_color=color.silver, text_size=size.small)
+    table.cell(tbl, 1, 12, trlTxt,          text_color=trlClr,       text_size=size.small)
+
+    table.cell(tbl, 0, 13, "Open Trades",   text_color=color.silver, text_size=size.small)
+    table.cell(tbl, 1, 13, str.tostring(strategy.opentrades), text_color=color.white, text_size=size.small)
+
+    table.cell(tbl, 0, 14, "Signal",        text_color=color.silver, text_size=size.small)
+    table.cell(tbl, 1, 14, sigEntryTxt,     text_color=sigEntryClr,  text_size=size.small)
