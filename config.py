@@ -8,12 +8,12 @@ _raw_universe = [
     "ADANIENT", "ADANIPORTS", "DIVISLAB", "DRREDDY", "EICHERMOT",
     "GRASIM", "HEROMOTOCO", "HINDALCO", "ITC", "JSWSTEEL",
     "SBILIFE", "HDFCLIFE", "APOLLOHOSP", "BAJAJ-AUTO", "BPCL",
-    "BRITANNIA", "CIPLA", "LTIM", "TATACONSUM", "VEDL",
+    "BRITANNIA", "CIPLA", "TATACONSUM", "VEDL",
 
     # ── Private Banks ─────────────────────────────────────────────────────────
     "YESBANK", "RBLBANK", "DCBBANK", "FEDERALBNK", "IDFCFIRSTB",
-    "BANDHANBNK", "CITYUNIONBK", "KARURVYSYA", "SOUTHINDBANK", "KTKBANK",
-    "JKBANK", "NAINFINANCE", "EQUITASBNK", "UJJIVANSFB", "SURYODAY",
+    "BANDHANBNK", "CUB", "KARURVYSYA", "SOUTHINDBANK", "KTKBANK",
+    "J&KBANK", "NAINFINANCE", "EQUITASBNK", "UJJIVANSFB", "SURYODAY",
     "UTKARSHBNK", "ESAFSFB",
 
     # ── PSU Banks ─────────────────────────────────────────────────────────────
@@ -34,25 +34,25 @@ _raw_universe = [
 
     # ── IT & Tech ─────────────────────────────────────────────────────────────
     "MPHASIS", "COFORGE", "PERSISTENT", "LTTS", "KPITTECH",
-    "TATAELXSI", "CYIENT", "BIRLASOFT", "MASTEK", "ZENSAR",
-    "FIRSTSOURCE", "RATEGAIN", "TATACOMM", "MAPMYINDIA", "INDIAMART",
+    "TATAELXSI", "CYIENT", "BSOFT", "MASTEK", "ZENSARTECH",
+    "FSL", "RATEGAIN", "TATACOMM", "MAPMYINDIA", "INDIAMART",
     "NYKAA", "PAYTM", "TANLA", "ROUTE", "NAZARA",
-    "INTELLECT", "RAMCO", "ONMOBILE", "ZOMATO",  # removed MSTECHNOLOGIES
-    "DELHIVERY", "INFOEDGE", "NAUKRI",
+    "INTELLECT", "ONMOBILE", "ZOMATO",  # removed MSTECHNOLOGIES, RAMCO (dup of RAMCOCEM)
+    "DELHIVERY", "NAUKRI",              # removed INFOEDGE (wrong ticker, NAUKRI is correct)
 
     # ── Pharma / Healthcare ───────────────────────────────────────────────────
     "LUPIN", "AUROPHARMA", "TORNTPHARM", "ALKEM", "BIOCON",
     "LALPATHLAB", "METROPOLIS", "THYROCARE", "JBCHEPHARM", "GLAND",
-    "ERIS", "STRIDES", "ABBOTINDIA", "GLAXO", "PFIZER",
+    "ERIS", "STAR", "ABBOTINDIA", "GLAXO", "PFIZER",
     "SANOFI", "ZYDUSLIFE", "AJANTPHARM", "GRANULES", "NATCOPHARM",
-    "IPCALAB", "LAURUS", "SOLARA", "ALEMBICLTD", "SEQUENT",
+    "IPCALAB", "LAURUS", "SOLARA", "ALEMBICLTD", "SEQUENTSCIENTIFIC",
     "NEULANDLAB", "SUVEN", "HIKAL", "RAINBOW", "FORTIS",
-    "MAXHEALTH", "NARAYANA", "ASTERDM", "KIMS", "KRSNAA",
-    "CONCORD", "MEDPLUS",                  # removed VIJAYABANK (delisted)
+    "MAXHEALTH", "NH", "ASTERDM", "KIMS", "KRSNAA",
+    "CONCORDBIO", "MEDPLUS",                  # removed VIJAYABANK (delisted)
 
     # ── Auto & Auto Ancillaries ───────────────────────────────────────────────
     "TVSMOTOR", "ASHOKLEY", "ESCORTS", "BALKRISIND", "APOLLOTYRE",
-    "CEAT", "MRF", "EXIDEIND", "AMARARAJA", "MINDAIND",
+    "CEATLTD", "MRF", "EXIDEIND", "AMARARAJABAT", "MINDAIND",
     "TIINDIA", "CRAFTSMAN", "SONACOMS", "ENDURANCE", "SUPRAJIT",
     "BHARATFORG", "WABCOINDIA", "SKF", "TIMKEN", "GREAVESCOT",
     "MOTHERSON", "BOSCHLTD", "SCHAEFFLER", "OLECTRA", "SAMVARDHANA",
@@ -61,7 +61,7 @@ _raw_universe = [
     # ── FMCG & Consumer ───────────────────────────────────────────────────────
     "PIDILITIND", "BERGEPAINT", "HAVELLS", "DABUR", "MARICO",
     "COLPAL", "GODREJCP", "EMAMILTD", "BAJAJCON", "RADICO",
-    "UNITEDBREWERIES", "VBLLTD", "MCDOWELL-N", "JYOTHYLAB", "GILLETTE",
+    "UBL", "VBL", "MCDOWELL-N", "JYOTHYLAB", "GILLETTE",
     "PGHH", "CCL", "BATAINDIA", "VGUARD", "RAJESHEXPO",
     "KAJARIACER", "WHIRLPOOL", "ORIENTELEC", "CROMPTON", "SYMPHONY",
     "BLUESTARCO", "AMBER", "KAYNES", "DIXON", "TRENT",
@@ -79,7 +79,7 @@ _raw_universe = [
 
     # ── Metals & Mining ───────────────────────────────────────────────────────
     "NMDC", "SAIL", "HINDCOPPER", "NATIONALUM", "WELCORP",
-    "RATNAMANI", "TINPLATE", "JINDALSAW", "HINDZINC", "MOIL",
+    "RATNAMANI", "TINPLATEINDIA", "JINDALSAW", "HINDZINC", "MOIL",
     "JSPL", "APLAPOLLO", "GRAVITA", "MIDHANI",
     # removed SANDUMA (invalid), VEDL / JSWSTEEL / TATASTEEL (duplicates from Nifty 50)
 
@@ -144,17 +144,17 @@ _raw_universe = [
     "NUCLEUS", "SAKSOFT", "NIITLTD", "3IINFOTECH", "ECLERX",
     "INFIBEAM", "SUBEX",                             # removed MKVENTURES (invalid), MAHINDRA (ambiguous)
     # Pharma / Diagnostics
-    "DIVI", "JUBLPHARMA", "SMSPHARMA", "LINCOLN",   # removed duplicate SEQUENT
+    "JUBLPHARMA", "SMSPHARMA", "LINCOLN",   # removed DIVI (wrong ticker, DIVISLAB already in universe)
     "MARKSANS", "GLENMARK", "WOCKPHARMA",            # removed IPCA (wrong ticker), SMSPHARM (typo)
     # Auto
-    "LUMAXTECH", "MAHSEAMLES", "SETCO", "HINDMOTORS",  # removed duplicate SUPRAJIT
+    "LUMAXTECH", "MAHSEAMLES", "SETCO",  # removed duplicate SUPRAJIT; removed HINDMOTORS (illiquid)
     "SUBROS", "RACL", "LUMAX",                       # removed MOTHERSUMI (renamed), STEELCAS (invalid)
     # Specialty Chemicals
-    "VINDHYATEL", "CHEMPLAST", "JIOFIN", "CARYSIL",  # removed duplicate TATACHEM
-    "MEGHMANI", "TRANSPEK", "PAUSHAKLTD", "EXCEL", "BORAX",
+    "VINDHYATEL", "JIOFIN", "CARYSIL",  # removed duplicate TATACHEM; removed CHEMPLAST (delisted)
+    "MEGHMANI", "PAUSHAKLTD", "EXCEL", "BORAX",  # removed TRANSPEK (illiquid)
     # Consumer / Retail
     "SHOPERSTOP", "VMART", "ABFRL", "VEDANT",        # removed duplicate NYKAA
-    "CAMPUS", "METRO", "BATA", "RELAXO", "NILKAMAL",
+    "CAMPUS", "METRO", "RELAXO", "NILKAMAL",  # removed BATA (wrong ticker, BATAINDIA already in universe)
     # Infra / Capital Goods
     "CRISIL", "CARBORUNIV", "GRAPHITE", "HLEGLAS", "VSTTILLERS",
     # removed duplicate KALPATPOWR, SCHAEFFLER; invalid USHA, BHARAT, WEIR
@@ -176,21 +176,47 @@ _raw_universe = [
 # Safety net: if any of these are ever re-added to _raw_universe they will be
 # logged as ERROR and excluded from the scan automatically.
 _INVALID_SYMBOLS: dict[str, str] = {
+    # ── Never-valid tickers ───────────────────────────────────────────────────
     "SANDUMA":        "not a recognised NSE ticker",
-    "VIJAYABANK":     "merged into Bank of Baroda — delisted",
-    "MAHINDRA":       "ambiguous — correct ticker is M&M (already in universe)",
-    "MISRDHATU":      "wrong ticker — correct ticker is MIDHANI (already in universe)",
-    "MURUDCERA":      "likely delisted / no liquid data",
-    "DRREDDYS":       "wrong ticker — correct ticker is DRREDDY (already in universe)",
-    "MOTHERSUMI":     "renamed — correct ticker is MOTHERSON (already in universe)",
     "STEELCAS":       "not a recognised NSE ticker",
     "USHA":           "ambiguous — no unique NSE ticker",
     "WEIR":           "not a recognised NSE ticker",
-    "IPCA":           "wrong ticker — correct ticker is IPCALAB (already in universe)",
     "MKVENTURES":     "not a recognised NSE ticker",
     "MSTECHNOLOGIES": "not a recognised NSE ticker",
     "SMSPHARM":       "likely duplicate / typo of SMSPHARMA",
     "BHARAT":         "ambiguous — no unique NSE ticker (BHARATFORG / BHARTIARTL?)",
+    # ── Delisted / insufficient data ─────────────────────────────────────────
+    "VIJAYABANK":     "merged into Bank of Baroda — delisted",
+    "MURUDCERA":      "likely delisted / no liquid data",
+    "CHEMPLAST":      "delisted from NSE",
+    "HINDMOTORS":     "illiquid — insufficient historical data on NSE",
+    "TRANSPEK":       "illiquid — insufficient historical data on NSE",
+    # ── Wrong tickers (correct ticker already in universe) ────────────────────
+    "MAHINDRA":       "ambiguous — correct ticker is M&M (already in universe)",
+    "MISRDHATU":      "wrong ticker — correct ticker is MIDHANI (already in universe)",
+    "DRREDDYS":       "wrong ticker — correct ticker is DRREDDY (already in universe)",
+    "IPCA":           "wrong ticker — correct ticker is IPCALAB (already in universe)",
+    "RAMCO":          "wrong ticker — correct ticker is RAMCOCEM (already in universe)",
+    "INFOEDGE":       "wrong ticker — correct ticker is NAUKRI (already in universe)",
+    "DIVI":           "wrong ticker — correct ticker is DIVISLAB (already in universe)",
+    "BATA":           "wrong ticker — correct ticker is BATAINDIA (already in universe)",
+    "LTIM":           "renamed — correct ticker is LTIMINDTREE (already in universe)",
+    # ── Renamed tickers (updated in universe) ────────────────────────────────
+    "MOTHERSUMI":     "renamed — correct ticker is MOTHERSON (already in universe)",
+    "CITYUNIONBK":    "renamed — correct ticker is CUB",
+    "JKBANK":         "renamed — correct ticker is J&KBANK",
+    "BIRLASOFT":      "renamed — correct ticker is BSOFT",
+    "ZENSAR":         "renamed — correct ticker is ZENSARTECH",
+    "FIRSTSOURCE":    "renamed — correct ticker is FSL",
+    "STRIDES":        "renamed — correct ticker is STAR",
+    "SEQUENT":        "renamed — correct ticker is SEQUENTSCIENTIFIC",
+    "NARAYANA":       "renamed — correct ticker is NH",
+    "CONCORD":        "renamed — correct ticker is CONCORDBIO",
+    "AMARARAJA":      "renamed — correct ticker is AMARARAJABAT",
+    "UNITEDBREWERIES":"renamed — correct ticker is UBL",
+    "VBLLTD":         "renamed — correct ticker is VBL",
+    "CEAT":           "renamed — correct ticker is CEATLTD",
+    "TINPLATE":       "renamed — correct ticker is TINPLATEINDIA",
 }
 
 

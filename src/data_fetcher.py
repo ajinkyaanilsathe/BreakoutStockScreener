@@ -16,6 +16,7 @@ _CACHE_TTL = 6 * 3600  # 6 hours
 def fetch_stock_data(symbol: str, period: str = "1y") -> Optional[pd.DataFrame]:
     ticker_sym = f"{symbol}.NS" if not symbol.startswith("^") else symbol
     log.info("%s  fetching from yfinance (%s)…", symbol, period)
+    time.sleep(0.25)   # pace cold-start requests to avoid Yahoo Finance rate limiting
     try:
         ticker = yf.Ticker(ticker_sym)
         df = ticker.history(period=period, auto_adjust=True, timeout=15)
