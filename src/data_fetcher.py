@@ -1,57 +1,19 @@
-import os
-import pickle
 import time
-from datetime import datetime, timedelta
 from typing import Optional
 
 import pandas as pd
+import streamlit as st
 import yfinance as yf
 
 from .logger import get_logger
 
 log = get_logger("data_fetcher")
 
-CACHE_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), ".cache")
-CACHE_TTL_HOURS = 6
+_CACHE_TTL = 6 * 3600  # 6 hours
 
 
-def _cache_path(symbol: str, period: str) -> str:
-    os.makedirs(CACHE_DIR, exist_ok=True)
-    safe = symbol.replace("/", "_").replace("^", "IDX_")
-    return os.path.join(CACHE_DIR, f"{safe}_{period}.pkl")
-
-
-def _is_cache_fresh(path: str) -> bool:
-    if not os.path.exists(path):
-        return False
-    age = datetime.now() - datetime.fromtimestamp(os.path.getmtime(path))
-    return age < timedelta(hours=CACHE_TTL_HOURS)
-
-
-def _load_cache(path: str) -> Optional[pd.DataFrame]:
-    try:
-        with open(path, "rb") as f:
-            return pickle.load(f)
-    except Exception:
-        return None
-
-
-def _save_cache(path: str, df: pd.DataFrame) -> None:
-    try:
-        with open(path, "wb") as f:
-            pickle.dump(df, f)
-    except Exception:
-        pass
-
-
-def fetch_stock_data(
-    symbol: str, period: str = "1y", use_cache: bool = True
-) -> Optional[pd.DataFrame]:
-    path = _cache_path(symbol, period)
-    if use_cache and _is_cache_fresh(path):
-        log.debug("%s  cache HIT (%s)", symbol, period)
-        return _load_cache(path)
-
+@st.cache_data(ttl=_CACHE_TTL, show_spinner=False)
+def fetch_stock_data(symbol: str, period: str = "1y") -> Optional[pd.DataFrame]:
     ticker_sym = f"{symbol}.NS" if not symbol.startswith("^") else symbol
     log.info("%s  fetching from yfinance (%s)…", symbol, period)
     try:
@@ -73,8 +35,6 @@ def fetch_stock_data(
             log.warning("%s  SKIP — only %d rows after cleaning (need ≥30)", symbol, len(df))
             return None
         log.info("%s  OK — %d bars fetched", symbol, len(df))
-        if use_cache:
-            _save_cache(path, df)
         return df
     except Exception as exc:
         log.error("%s  FETCH ERROR — %s: %s", symbol, type(exc).__name__, exc)
