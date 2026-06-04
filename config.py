@@ -4,7 +4,7 @@ _raw_universe = [
     "BHARTIARTL", "KOTAKBANK", "LT", "AXISBANK", "ASIANPAINT", "MARUTI",
     "WIPRO", "ULTRACEMCO", "BAJFINANCE", "TITAN", "NESTLEIND", "POWERGRID",
     "HCLTECH", "BAJAJFINSV", "SUNPHARMA", "TECHM", "NTPC", "ONGC",
-    "TATAMOTORS", "INDUSINDBK", "M&M", "COALINDIA", "TATASTEEL",
+    "TMPV", "INDUSINDBK", "M&M", "COALINDIA", "TATASTEEL",
     "ADANIENT", "ADANIPORTS", "DIVISLAB", "DRREDDY", "EICHERMOT",
     "GRASIM", "HEROMOTOCO", "HINDALCO", "ITC", "JSWSTEEL",
     "SBILIFE", "HDFCLIFE", "APOLLOHOSP", "BAJAJ-AUTO", "BPCL",
@@ -55,13 +55,13 @@ _raw_universe = [
     "CEATLTD", "MRF", "EXIDEIND", "AMARARAJABAT", "MINDAIND",
     "TIINDIA", "CRAFTSMAN", "SONACOMS", "ENDURANCE", "SUPRAJIT",
     "BHARATFORG", "WABCOINDIA", "SKF", "TIMKEN", "GREAVESCOT",
-    "MOTHERSON", "BOSCHLTD", "SCHAEFFLER", "OLECTRA", "SAMVARDHANA",
-    "SWARAJENG", "GABRIEL", "JAMNA", "MINDA", "UCALFUEL",
+    "MOTHERSON", "BOSCHLTD", "SCHAEFFLER", "OLECTRA",
+    "SWARAJENG", "GABRIEL", "JAMNAAUTO", "MINDACORP", "UCAL",
 
     # ── FMCG & Consumer ───────────────────────────────────────────────────────
     "PIDILITIND", "BERGEPAINT", "HAVELLS", "DABUR", "MARICO",
     "COLPAL", "GODREJCP", "EMAMILTD", "BAJAJCON", "RADICO",
-    "UBL", "VBL", "MCDOWELL-N", "JYOTHYLAB", "GILLETTE",
+    "UBL", "VBL", "UNITDSPR", "JYOTHYLAB", "GILLETTE",
     "PGHH", "CCL", "BATAINDIA", "VGUARD", "RAJESHEXPO",
     "KAJARIACER", "WHIRLPOOL", "ORIENTELEC", "CROMPTON", "SYMPHONY",
     "BLUESTARCO", "AMBER", "KAYNES", "DIXON", "TRENT",
@@ -151,21 +151,19 @@ _raw_universe = [
     "SUBROS", "RACL", "LUMAX",                       # removed MOTHERSUMI (renamed), STEELCAS (invalid)
     # Specialty Chemicals
     "VINDHYATEL", "JIOFIN", "CARYSIL",  # removed duplicate TATACHEM; removed CHEMPLAST (delisted)
-    "MEGHMANI", "PAUSHAKLTD", "EXCEL", "BORAX",  # removed TRANSPEK (illiquid)
+    "MOL", "PAUSHAKLTD", "EXCEL",  # MEGHMANI→MOL; removed BORAX (amalgamated), TRANSPEK (illiquid)
     # Consumer / Retail
-    "SHOPERSTOP", "VMART", "ABFRL", "VEDANT",        # removed duplicate NYKAA
-    "CAMPUS", "METRO", "RELAXO", "NILKAMAL",  # removed BATA (wrong ticker, BATAINDIA already in universe)
+    "SHOPERSTOP", "VMART", "ABFRL", "MANYAVAR",       # VEDANT→MANYAVAR; removed duplicate NYKAA
+    "CAMPUS", "METROBRAND", "RELAXO", "NILKAMAL",  # METRO→METROBRAND; removed BATA (wrong ticker)
     # Infra / Capital Goods
     "CRISIL", "CARBORUNIV", "GRAPHITE", "HLEGLAS", "VSTTILLERS",
     # removed duplicate KALPATPOWR, SCHAEFFLER; invalid USHA, BHARAT, WEIR
     # Healthcare / Diagnostics
-    "JUPITERHSP", "SYNGENE",
-    # removed DRREDDYS (wrong ticker), duplicate GLENMARK, duplicate TORNTPHARM
-    # Real Estate / Housing
-    "NXTDIGITAL", "INDIAGRID", "POWERMECH", "GREENPANEL",  # removed duplicate CENTURYPLY
-    # PSU / Defence
-    "GARDENREACH",
-    # removed duplicate COCHINSHIP, invalid BHARAT, MISRDHATU (wrong ticker), MURUDCERA (delisted)
+    "JLHL", "SYNGENE",
+    # JUPITERHSP→JLHL; removed DRREDDYS (wrong ticker), duplicate GLENMARK, duplicate TORNTPHARM
+    # Real Estate / Housing / Infra
+    "NDLVENTURE", "INDIGRID", "POWERMECH", "GREENPANEL",  # NXTDIGITAL→NDLVENTURE; INDIAGRID→INDIGRID
+    # PSU / Defence — removed GARDENREACH (wrong ticker, GRSE already in universe)
 ]
 
 #For manual check
@@ -217,6 +215,20 @@ _INVALID_SYMBOLS: dict[str, str] = {
     "VBLLTD":         "renamed — correct ticker is VBL",
     "CEAT":           "renamed — correct ticker is CEATLTD",
     "TINPLATE":       "renamed — correct ticker is TINPLATEINDIA",
+    "TATAMOTORS":     "split Oct-2025 — passenger vehicles now TMPV, commercial vehicles TMCV",
+    "MEGHMANI":       "renamed — correct ticker is MOL (Meghmani Organics Ltd)",
+    "VEDANT":         "wrong ticker — correct ticker is MANYAVAR (Vedant Fashions)",
+    "METRO":          "wrong ticker — correct ticker is METROBRAND (Metro Brands Ltd)",
+    "JUPITERHSP":     "wrong ticker — correct ticker is JLHL (Jupiter Life Line Hospitals)",
+    "NXTDIGITAL":     "renamed Apr-2023 — correct ticker is NDLVENTURE (NDL Ventures Ltd)",
+    "INDIAGRID":      "typo — correct NSE ticker is INDIGRID (IndiGrid Infrastructure Trust)",
+    "GARDENREACH":    "wrong ticker — correct ticker is GRSE (already in universe)",
+    "SAMVARDHANA":    "wrong ticker — correct ticker is MOTHERSON (already in universe)",
+    "JAMNA":          "wrong ticker — correct ticker is JAMNAAUTO (Jamna Auto Industries)",
+    "MINDA":          "wrong ticker — correct ticker is MINDACORP (Minda Corporation Ltd)",
+    "UCALFUEL":       "renamed Apr-2023 — correct ticker is UCAL (Ucal Ltd)",
+    "MCDOWELL-N":     "renamed — correct ticker is UNITDSPR (United Spirits Ltd)",
+    "BORAX":          "amalgamated into Dharamsi Morarji Chemical — delisted",
 }
 
 

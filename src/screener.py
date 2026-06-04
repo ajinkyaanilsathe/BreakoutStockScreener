@@ -501,3 +501,59 @@ def run_screener(symbols: list, params: dict, progress_cb=None) -> tuple[list, d
     log.info("─── Screener done — %d candidates from %d symbols", len(results), total)
     results.sort(key=lambda x: x["score"], reverse=True)
     return results, regime
+
+
+# ── Confirmed Breakout Screener ───────────────────────────────────────────────
+
+_CONFIRMED_OVERRIDES: dict = {
+    "rsi_min":           52,
+    "rsi_max":           75,
+    "min_rel_volume":    2.0,    # 2x volume (vs 1.5x default)
+    "adx_min":           25,     # stronger trend (vs 20)
+    "min_score":         65,     # higher quality bar (vs 45)
+    "min_rr_ratio":      2.0,    # better risk-reward (vs 1.5)
+    "pct_from_52w_high": -8.0,   # within 8% of 52W high (vs -15%)
+    "min_signal_count":  12,     # 12/17 signals required (vs 7)
+}
+
+# All six gates must fire — these are NOT negotiable
+_HARD_GATES = (
+    "ut_bot_buy",     # UT Bot crossover confirmed on previous bar
+    "weekly_trend",   # weekly MA20 + RSI > 50 both bullish
+    "above_ma20",     # trending above short-term MA
+    "above_ma50",     # trending above medium-term MA
+    "above_ma150",    # in a long-term uptrend
+    "volume_surge",   # 2x+ volume on breakout day
+)
+
+
+def run_confirmed_screener(
+    symbols: list,
+    params: dict,
+    progress_cb=None,
+) -> tuple[list, dict]:
+    """
+    Stricter screener targeting ~70%+ win-rate.
+
+    Applies tighter parameter thresholds, then enforces 6 hard gates
+    that must ALL fire simultaneously:
+        UT Bot buy confirmed  ·  weekly trend bullish
+        above MA20 / MA50 / MA150  ·  volume ≥ 2×
+        True VCP  OR  BB breakout (price structure required)
+    """
+    confirmed_params = {**params, **_CONFIRMED_OVERRIDES}
+    results, regime = run_screener(symbols, confirmed_params, progress_cb=progress_cb)
+
+    filtered = [
+        r for r in results
+        if (
+            all(r["signals"].get(g, False) for g in _HARD_GATES)
+            and (r["signals"].get("true_vcp", False) or r["signals"].get("bb_breakout", False))
+        )
+    ]
+
+    log.info(
+        "─── Confirmed screener: %d passed run_screener → %d after hard gates",
+        len(results), len(filtered),
+    )
+    return filtered, regime

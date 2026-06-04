@@ -16,6 +16,24 @@ from src.data_fetcher import fetch_market_index, fetch_stock_data
 from src.indicators import add_indicators
 from src.screener import run_screener, analyze_stock
 
+# ── Confirmed Breakout — local definition (avoids Streamlit hot-reload issues) ─
+_CONF_OVR = {
+    "rsi_min": 52, "rsi_max": 75,
+    "min_rel_volume": 2.0, "adx_min": 25,
+    "min_score": 65, "min_rr_ratio": 2.0,
+    "pct_from_52w_high": -8.0, "min_signal_count": 12,
+}
+_HARD_GATES = ("ut_bot_buy", "weekly_trend", "above_ma20", "above_ma50", "above_ma150", "volume_surge")
+
+def run_confirmed_screener(symbols, params, progress_cb=None):
+    results, regime = run_screener(symbols, {**params, **_CONF_OVR}, progress_cb=progress_cb)
+    filtered = [
+        r for r in results
+        if (all(r["signals"].get(g, False) for g in _HARD_GATES)
+            and (r["signals"].get("true_vcp", False) or r["signals"].get("bb_breakout", False)))
+    ]
+    return filtered, regime
+
 # ── page config ───────────────────────────────────────────────────────────────
 
 st.set_page_config(
@@ -266,6 +284,9 @@ def _to_excel_bytes(sheets: dict) -> bytes:
     buf = io.BytesIO()
     with pd.ExcelWriter(buf, engine="openpyxl") as writer:
         for name, df in sheets.items():
+            df = df.copy()
+            for col in df.select_dtypes(include=["datetimetz"]).columns:
+                df[col] = df[col].dt.tz_localize(None)
             df.to_excel(writer, sheet_name=name[:31], index=False)
     return buf.getvalue()
 
@@ -342,7 +363,7 @@ st.divider()
 
 # ── tabs ──────────────────────────────────────────────────────────────────────
 
-tab1, tab2, tab3, tab4 = st.tabs(["🏠 Dashboard", "🔍 Screener", "📊 Stock Analysis", "⭐ Best Buy"])
+tab1, tab2, tab3, tab4, tab5 = st.tabs(["🏠 Dashboard", "🔍 Screener", "📊 Stock Analysis", "⭐ Best Buy", "🎯 Confirmed Breakout"])
 
 # ─── TAB 1: Dashboard ─────────────────────────────────────────────────────────
 
@@ -933,3 +954,161 @@ with tab4:
                 "+ Weekly Trend (+7) + Sector Leading (+6) + R:R bonus (up to +8) + RS bonus (up to +10). "
                 "⚠️ For educational use only. Not financial advice."
             )
+
+# ─── TAB 5: Confirmed Breakout ────────────────────────────────────────────────
+
+with tab5:
+    st.subheader("🎯 Confirmed Breakout — High Conviction Only")
+    st.markdown(
+        "Stricter screener designed for **~70%+ win rate**. "
+        "Uses tighter thresholds (vol ≥ 2×, ADX ≥ 25, within 8% of 52W high, score ≥ 65, R:R ≥ 2×) "
+        "and enforces **6 hard gates that must ALL fire simultaneously**."
+    )
+
+    with st.expander("📋 What makes a Confirmed Breakout?", expanded=False):
+        st.markdown("""
+| Gate | Requirement | Why |
+|------|-------------|-----|
+| 🤖 **UT Bot Buy** | Price crossed above ATR trailing stop on previous bar | Confirms the actual breakout moment — no false entries |
+| 📅 **Weekly Trend** | Weekly close > Weekly MA20 AND Weekly RSI > 50 | Higher timeframe must agree — filters against countertrend trades |
+| 📈 **All MAs Aligned** | Above MA20, MA50, and MA150 | Stock must be in a clean uptrend across all timeframes |
+| 🔊 **Volume ≥ 2×** | Relative volume ≥ 2× the 20-day average | Real breakouts need real buying — removes low-conviction moves |
+| 🌀 **VCP or BB Breakout** | True Volatility Contraction Pattern OR Bollinger Band breakout | Price must have compressed before breaking out (not extended) |
+| 📐 **Near 52W High** | Within 8% of 52-week high | Breakouts from near highs continue — breakouts from deep in a hole don't |
+
+**Additional thresholds vs regular screener:**
+Min signals: **12/17** · Min score: **65** · Min R:R: **2.0×** · ADX: **≥ 25** · RSI: **52–75**
+        """)
+
+    _conf_regime = st.session_state.get("confirmed_regime", {})
+    if _conf_regime:
+        if _conf_regime.get("is_bullish"):
+            st.success(f"Market Regime: **BULLISH** — Nifty {_conf_regime['nifty_close']:,} above 200-MA {_conf_regime['nifty_ma200']:,}.")
+        else:
+            st.error(f"Market Regime: **BEARISH** — Nifty {_conf_regime['nifty_close']:,} below 200-MA {_conf_regime['nifty_ma200']:,}. Signals suppressed.")
+
+    col_btn5, col_info5 = st.columns([1, 3])
+    with col_btn5:
+        conf_btn = st.button("🎯 Run Confirmed Screener", type="primary", use_container_width=True)
+    with col_info5:
+        st.caption("Runs independently of the regular screener. Shares the same 6-hr data cache so it's fast after the first run.")
+
+    if conf_btn:
+        _conf_progress = st.progress(0)
+        _conf_status   = st.empty()
+
+        def _conf_progress_cb(frac, sym):
+            _conf_progress.progress(frac)
+            _conf_status.caption(f"Analyzing {sym}…")
+
+        with st.spinner("Scanning for confirmed breakouts…"):
+            _conf_results, _conf_regime_out = run_confirmed_screener(
+                STOCK_UNIVERSE, custom_params, progress_cb=_conf_progress_cb
+            )
+
+        _conf_progress.empty()
+        _conf_status.empty()
+        st.session_state["confirmed_results"] = _conf_results
+        st.session_state["confirmed_regime"]  = _conf_regime_out
+
+        if _conf_results:
+            st.success(f"✅ **{len(_conf_results)} confirmed breakout{'s' if len(_conf_results) != 1 else ''}** passed all 6 gates.")
+        else:
+            st.warning("No stocks passed all 6 gates today. Market may be extended or in a bearish phase.")
+
+    conf_results = st.session_state.get("confirmed_results", [])
+
+    if conf_results:
+        rows5 = []
+        for r in conf_results:
+            hold = r.get("hold", {})
+            bd   = r.get("breakout_date")
+            bda  = r.get("breakout_days_ago")
+            bd_str = f"{bd} ({bda}d ago)" if bd and bda is not None else (bd or "—")
+
+            sig = r["signals"]
+            gates = " ".join([
+                "🤖" if r.get("ut_bot_buy")            else "",
+                "📅" if sig.get("weekly_trend")        else "",
+                "🌀" if sig.get("true_vcp")            else ("🔲" if sig.get("bb_breakout") else ""),
+                "🔊" if sig.get("volume_surge")        else "",
+            ]).strip()
+
+            rows5.append({
+                "Symbol":         r["symbol"],
+                "Breakout Date":  bd_str,
+                "Price (₹)":      r["price"],
+                "Score":          r["score"],
+                "Signals":        r["signal_count"],
+                "Gates":          gates,
+                "Target (₹)":     r["target"],
+                "Stop Loss (₹)":  r["stop_loss"],
+                "Upside %":       r["upside_pct"],
+                "R:R":            r["rr_ratio"],
+                "Rel Vol":        r["rel_volume"],
+                "RSI":            r["rsi"],
+                "ADX":            r["adx"],
+                "From 52W High":  f"{r['pct_from_52w_high']}%",
+                "Hold":           hold.get("label", "—"),
+                "Reasons":        r["reasons"],
+            })
+
+        df5 = pd.DataFrame(rows5)
+
+        def _c5_score(v):
+            if v >= 80: return "color:#00C896;font-weight:700"
+            if v >= 65: return "color:#FFA500;font-weight:700"
+            return "color:#FF4B4B"
+
+        def _c5_upside(v):
+            return "color:#00C896" if v >= 10 else "color:#FFA500"
+
+        def _c5_rr(v):
+            if v >= 2.5: return "color:#00C896;font-weight:700"
+            return "color:#FFA500"
+
+        def _c5_bkdate(val):
+            if not val or val == "—":
+                return "color:#888"
+            try:
+                days = int(str(val).split("(")[1].split("d")[0])
+                if days <= 10: return "color:#00C896;font-weight:700"
+                if days <= 20: return "color:#FFA500"
+                return "color:#888"
+            except Exception:
+                return ""
+
+        styled5 = (
+            df5.style
+            .map(_c5_score,  subset=["Score"])
+            .map(_c5_upside, subset=["Upside %"])
+            .map(_c5_rr,     subset=["R:R"])
+            .map(_c5_bkdate, subset=["Breakout Date"])
+            .format({
+                "Price (₹)":     "{:,.2f}",
+                "Target (₹)":    "{:,.2f}",
+                "Stop Loss (₹)": "{:,.2f}",
+                "Upside %":      "{:.1f}%",
+                "R:R":           "{:.2f}",
+                "Rel Vol":       "{:.1f}x",
+                "RSI":           "{:.1f}",
+                "ADX":           "{:.1f}",
+            })
+        )
+        st.dataframe(styled5, height=420)
+
+        _c5_col, _ = st.columns([1, 4])
+        with _c5_col:
+            st.download_button(
+                label="📥 Export to Excel",
+                data=_to_excel_bytes({"Confirmed Breakouts": df5.reset_index(drop=True)}),
+                file_name=f"confirmed_breakout_{date.today()}.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            )
+
+        st.caption(
+            "**Gates legend:** 🤖 UT Bot Buy · 📅 Weekly Trend · 🌀 True VCP · 🔲 BB Breakout · 🔊 2× Volume.  "
+            "⚠️ For educational use only. Not financial advice."
+        )
+    else:
+        st.info("Click **🎯 Run Confirmed Screener** to scan for high-conviction breakouts.")

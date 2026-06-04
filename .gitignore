@@ -16,6 +16,9 @@ logs/
 # Exported reports
 *.xlsx
 
+# Backtest output
+backtest_results/
+
 # Environment secrets
 .env
 .env.local
