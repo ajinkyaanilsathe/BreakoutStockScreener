@@ -13,13 +13,23 @@ _CACHE_TTL = 6 * 3600  # 6 hours
 
 
 @st.cache_data(ttl=_CACHE_TTL, show_spinner=False)
-def fetch_stock_data(symbol: str, period: str = "1y") -> Optional[pd.DataFrame]:
+def fetch_stock_data(symbol: str, period: str = "1y", as_of_date: str = "") -> Optional[pd.DataFrame]:
     ticker_sym = f"{symbol}.NS" if not symbol.startswith("^") else symbol
-    log.info("%s  fetching from yfinance (%s)…", symbol, period)
+    log.info("%s  fetching from yfinance (%s, as_of=%s)…", symbol, period, as_of_date or "today")
     time.sleep(0.25)   # pace cold-start requests to avoid Yahoo Finance rate limiting
     try:
         ticker = yf.Ticker(ticker_sym)
-        df = ticker.history(period=period, auto_adjust=True, timeout=15)
+        if as_of_date:
+            end_dt = pd.Timestamp(as_of_date) + pd.Timedelta(days=1)
+            start_dt = end_dt - pd.Timedelta(days=550)  # ~18 months of daily data
+            df = ticker.history(
+                start=start_dt.strftime("%Y-%m-%d"),
+                end=end_dt.strftime("%Y-%m-%d"),
+                auto_adjust=True,
+                timeout=15,
+            )
+        else:
+            df = ticker.history(period=period, auto_adjust=True, timeout=15)
         if df is None or df.empty:
             log.warning("%s  SKIP — yfinance returned empty data", symbol)
             return None
@@ -50,5 +60,5 @@ def fetch_multiple(symbols: list, period: str = "1y", delay: float = 0.1) -> dic
     return results
 
 
-def fetch_market_index(period: str = "1y") -> Optional[pd.DataFrame]:
-    return fetch_stock_data("^NSEI", period=period)
+def fetch_market_index(period: str = "1y", as_of_date: str = "") -> Optional[pd.DataFrame]:
+    return fetch_stock_data("^NSEI", period=period, as_of_date=as_of_date)

@@ -1,7 +1,7 @@
 import sys
 import os
 import io
-from datetime import date
+from datetime import date, timedelta
 
 sys.path.insert(0, os.path.dirname(__file__))
 
@@ -10,6 +10,7 @@ import pandas as pd
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 import streamlit as st
+import yfinance as yf
 
 from config import STOCK_UNIVERSE, STRATEGY_PARAMS, MARKET_REGIME_SYMBOL
 from src.data_fetcher import fetch_market_index, fetch_stock_data
@@ -25,8 +26,8 @@ _CONF_OVR = {
 }
 _HARD_GATES = ("ut_bot_buy", "weekly_trend", "above_ma20", "above_ma50", "above_ma150", "volume_surge")
 
-def run_confirmed_screener(symbols, params, progress_cb=None):
-    results, regime = run_screener(symbols, {**params, **_CONF_OVR}, progress_cb=progress_cb)
+def run_confirmed_screener(symbols, params, progress_cb=None, as_of_date: str = ""):
+    results, regime = run_screener(symbols, {**params, **_CONF_OVR}, progress_cb=progress_cb, as_of_date=as_of_date)
     filtered = [
         r for r in results
         if (all(r["signals"].get(g, False) for g in _HARD_GATES)
@@ -174,19 +175,139 @@ def _build_candlestick(df: pd.DataFrame, symbol: str, sr_data: dict | None = Non
     return fig
 
 
-def _build_nifty_chart(nifty_df: pd.DataFrame) -> go.Figure:
-    close = nifty_df["Close"].astype(float)
-    ma200 = close.rolling(200).mean()
+# ── RRG (Relative Rotation Graph) ────────────────────────────────────────────
+
+_RRG_SECTORS = {
+    "Banks":    ["HDFCBANK", "ICICIBANK", "KOTAKBANK", "AXISBANK", "SBIN"],
+    "IT":       ["INFY", "TCS", "HCLTECH", "TECHM", "WIPRO"],
+    "Pharma":   ["SUNPHARMA", "DRREDDY", "CIPLA", "DIVISLAB", "LUPIN"],
+    "FMCG":     ["HINDUNILVR", "ITC", "NESTLEIND", "DABUR", "MARICO"],
+    "Auto":     ["MARUTI", "BAJAJ-AUTO", "M&M", "EICHERMOT", "HEROMOTOCO"],
+    "Energy":   ["RELIANCE", "ONGC", "BPCL", "NTPC", "POWERGRID"],
+    "Metals":   ["TATASTEEL", "JSWSTEEL", "HINDALCO", "COALINDIA", "VEDL"],
+    "CapGoods": ["LT", "SIEMENS", "ABB", "BHEL", "CUMMINSIND"],
+    "Realty":   ["DLF", "GODREJPROP", "PRESTIGE", "OBEROIRLTY", "BRIGADE"],
+    "Consumer": ["TITAN", "ASIANPAINT", "PIDILITIND", "HAVELLS", "VOLTAS"],
+}
+
+_RRG_INDIV_SYMBOLS = [
+    "RELIANCE", "HDFCBANK", "ICICIBANK", "INFY", "TCS",
+    "HINDUNILVR", "MARUTI", "SUNPHARMA", "AXISBANK", "LT",
+    "TATASTEEL", "BAJFINANCE", "TITAN", "WIPRO", "HCLTECH",
+    "SBIN", "NTPC", "BAJAJ-AUTO", "DRREDDY", "ASIANPAINT",
+    "KOTAKBANK", "ADANIENT", "NESTLEIND", "POWERGRID", "ITC",
+]
+
+_RRG_Q_COLORS = {
+    "Leading":   "#00C851",
+    "Weakening": "#FF8800",
+    "Lagging":   "#FF4B4B",
+    "Improving": "#2196F3",
+}
+
+
+@st.cache_data(ttl=6 * 3600, show_spinner=False)
+def _fetch_weekly_close(symbol: str) -> pd.Series | None:
+    ticker_sym = f"{symbol}.NS" if not symbol.startswith("^") else symbol
+    try:
+        df = yf.Ticker(ticker_sym).history(period="2y", interval="1wk", auto_adjust=True)
+        if df is not None and not df.empty and "Close" in df.columns:
+            s = df["Close"].dropna()
+            if s.index.tz is not None:
+                s.index = s.index.tz_localize(None)
+            return s
+    except Exception:
+        pass
+    return None
+
+
+def _compute_rrg_points(price_dict: dict, bench: pd.Series, tail_weeks: int = 12) -> list:
+    raw = []
+    for sym, prices in price_dict.items():
+        common = bench.index.intersection(prices.index)
+        if len(common) < 20:
+            continue
+        rs = (prices.loc[common] / bench.loc[common]) * 100
+        ratio = rs.ewm(span=10, adjust=False).mean()
+        momentum = ratio.pct_change(1) * 100 + 100
+        raw.append((sym, ratio, momentum))
+
+    if not raw:
+        return []
+
+    cur_r = pd.Series([r.iloc[-1] for _, r, _ in raw])
+    cur_m = pd.Series([m.iloc[-1] for _, _, m in raw])
+    r_mean, r_std = cur_r.mean(), max(float(cur_r.std()), 1e-9)
+    m_mean, m_std = cur_m.mean(), max(float(cur_m.std()), 1e-9)
+
+    out = []
+    for sym, ratio, momentum in raw:
+        n = min(tail_weeks + 1, len(ratio))
+        tx = [100 + (v - r_mean) / r_std * 10 for v in ratio.iloc[-n:].values]
+        ty = [100 + (v - m_mean) / m_std * 10 for v in momentum.iloc[-n:].values]
+        out.append({"symbol": sym, "x": tx[-1], "y": ty[-1], "tail_x": tx[:-1], "tail_y": ty[:-1]})
+    return out
+
+
+def _quadrant(x: float, y: float) -> str:
+    if x >= 100 and y >= 100: return "Leading"
+    if x >= 100 and y <  100: return "Weakening"
+    if x <  100 and y <  100: return "Lagging"
+    return "Improving"
+
+
+def _build_rrg_fig(points: list, title: str) -> go.Figure:
     fig = go.Figure()
-    fig.add_trace(go.Scatter(x=nifty_df.index, y=close, line=dict(color="#00C896", width=1.5), name="Nifty 50", fill="tozeroy", fillcolor="rgba(0,200,150,0.08)"))
-    fig.add_trace(go.Scatter(x=nifty_df.index, y=ma200, line=dict(color="#FF69B4", width=1.2, dash="dot"), name="200-MA"))
+
+    for (x0, y0, x1, y1), q in [
+        ((100, 100, 116, 116), "Leading"),
+        ((100,  84, 116, 100), "Weakening"),
+        (( 84,  84, 100, 100), "Lagging"),
+        (( 84, 100, 100, 116), "Improving"),
+    ]:
+        c = _RRG_Q_COLORS[q].lstrip("#")
+        r, g, b = int(c[0:2], 16), int(c[2:4], 16), int(c[4:6], 16)
+        fig.add_shape(type="rect", x0=x0, y0=y0, x1=x1, y1=y1,
+                      fillcolor=f"rgba({r},{g},{b},0.08)", line_width=0, layer="below")
+
+    fig.add_hline(y=100, line=dict(color="#555", width=1, dash="dot"))
+    fig.add_vline(x=100, line=dict(color="#555", width=1, dash="dot"))
+
+    for d in points:
+        q = _quadrant(d["x"], d["y"])
+        col = _RRG_Q_COLORS[q]
+        if len(d["tail_x"]) > 1:
+            fig.add_trace(go.Scatter(
+                x=d["tail_x"] + [d["x"]], y=d["tail_y"] + [d["y"]],
+                mode="lines", line=dict(color=col, width=1, dash="dot"),
+                opacity=0.3, showlegend=False, hoverinfo="skip",
+            ))
+        fig.add_trace(go.Scatter(
+            x=[d["x"]], y=[d["y"]],
+            mode="markers+text",
+            marker=dict(size=9, color=col, line=dict(color="white", width=1)),
+            text=[d["symbol"]], textposition="top center",
+            textfont=dict(size=8, color=col),
+            hovertemplate=(
+                f"<b>{d['symbol']}</b><br>"
+                "RS-Ratio: %{x:.1f}<br>RS-Momentum: %{y:.1f}<br>"
+                f"Quadrant: {q}<extra></extra>"
+            ),
+            showlegend=False,
+        ))
+
+    for label, lx, ly in [("Leading", 109, 113), ("Weakening", 109, 87),
+                           ("Lagging", 91, 87), ("Improving", 91, 113)]:
+        fig.add_annotation(x=lx, y=ly, text=f"<b>{label}</b>", showarrow=False,
+                           font=dict(size=11, color=_RRG_Q_COLORS[label]), opacity=0.55)
+
     fig.update_layout(
-        height=220, template="plotly_dark",
+        title=dict(text=title, font=dict(size=12, color="#bbb"), x=0.02, y=0.97),
+        height=460, template="plotly_dark",
         paper_bgcolor="#0E1117", plot_bgcolor="#0E1117",
-        margin=dict(l=10, r=10, t=10, b=10),
-        showlegend=True, legend=dict(orientation="h", y=1.1),
-        xaxis=dict(gridcolor="#1E2130"),
-        yaxis=dict(gridcolor="#1E2130"),
+        margin=dict(l=20, r=10, t=40, b=30),
+        xaxis=dict(title="RS-Ratio →", gridcolor="#1E2130", range=[84, 116], zeroline=False),
+        yaxis=dict(title="RS-Momentum ↑", gridcolor="#1E2130", range=[84, 116], zeroline=False),
     )
     return fig
 
@@ -325,6 +446,14 @@ with st.sidebar:
     }
 
     st.divider()
+    st.markdown("**About**")
+    st.caption(
+        "NSE breakout screener using 17+ technical signals — "
+        "UT Bot, VCP, BB, RSI, ADX, RS Rank, weekly trend, candlestick patterns. "
+        "Suggests dynamic entry, stop-loss, target and hold period per stock."
+    )
+
+    st.divider()
     st.caption("Data cached for 6 hrs. Prices from NSE via yfinance.")
     st.caption("⚠️ For educational use only. Not financial advice.")
 
@@ -368,48 +497,42 @@ tab1, tab2, tab3, tab4, tab5 = st.tabs(["🏠 Dashboard", "🔍 Screener", "📊
 # ─── TAB 1: Dashboard ─────────────────────────────────────────────────────────
 
 with tab1:
-    col_l, col_r = st.columns([3, 2])
+    st.subheader("Relative Rotation Graph (RRG)")
+    rrg_mode = st.radio(
+        "rrg_view",
+        options=["Option 1 — Individual Stocks", "Option 3 — Sectors"],
+        horizontal=True,
+        label_visibility="collapsed",
+    )
 
-    with col_l:
-        st.subheader("Nifty 50 — 1 Year")
-        if nifty_df is not None:
-            st.plotly_chart(_build_nifty_chart(nifty_df))
+    with st.spinner("Fetching RRG data…"):
+        _bench = _fetch_weekly_close("^NSEI")
+
+    if _bench is None:
+        st.warning("Could not fetch Nifty benchmark data.")
+    elif rrg_mode.startswith("Option 1"):
+        _prices = {sym: s for sym in _RRG_INDIV_SYMBOLS
+                   if (s := _fetch_weekly_close(sym)) is not None}
+        _pts = _compute_rrg_points(_prices, _bench)
+        if _pts:
+            st.plotly_chart(_build_rrg_fig(_pts, "RRG — Top 25 NSE Stocks vs Nifty 50"),
+                            use_container_width=True)
         else:
-            st.warning("Could not fetch Nifty 50 data.")
-
-    with col_r:
-        st.subheader("How to use this tool")
-        st.markdown("""
-1. Go to **🔍 Screener** tab → click **Run Screener**
-2. Stocks scoring ≥ threshold with good R:R appear in the table
-3. Click any stock row then open **📊 Stock Analysis** for the chart
-4. Check **entry price · target · stop-loss** before trading
-
-**Scoring breakdown (v3)**
-| Component | Max |
-|-----------|-----|
-| Volume surge | 25 |
-| Price action (52W high / BB / True VCP) | 30+ |
-| Momentum (RSI + MACD + RS + Candle) | 25 |
-| Trend (MA20/50/150 + ADX + Weekly) | 20 |
-| Entry quality (close + vol + sector + UT Bot) | 20 |
-
-**New in v3**
-- **Dynamic target**: ATR×3, scaled by score, capped by 52W high
-- **Dynamic hold**: 10–90 days suggested per stock
-- **UT Sell exit**: trailing stop crossover as primary exit
-- **RS Rank filter**: only top performers (configurable)
-- **Weekly trend gate**: weekly MA20 + RSI > 50
-- **True VCP**: 3 contracting swings + declining volume
-- **Candlestick patterns**: Engulfing, Hammer, Inside Bar
-- **Sector rotation bonus**: stocks in leading sectors score higher
-- Market gate: **no trades when Nifty < 200-MA**
-
-**Risk rules**
-- SL: UT_Stop or 2× ATR or –5% (tightest wins)
-- Min R:R: 1.5×
-- Position size: risk ≤ 1–2% of capital per trade
-        """)
+            st.warning("Not enough data to build RRG.")
+    else:
+        _sector_prices: dict = {}
+        for _sec, _stocks in _RRG_SECTORS.items():
+            _series = [s for sym in _stocks if (s := _fetch_weekly_close(sym)) is not None]
+            if _series:
+                _df_sec = pd.concat(_series, axis=1).dropna(how="all")
+                _df_sec = _df_sec.div(_df_sec.iloc[0])
+                _sector_prices[_sec] = _df_sec.mean(axis=1) * 100
+        _pts = _compute_rrg_points(_sector_prices, _bench)
+        if _pts:
+            st.plotly_chart(_build_rrg_fig(_pts, "RRG — NSE Sectors vs Nifty 50"),
+                            use_container_width=True)
+        else:
+            st.warning("Not enough data to build sector RRG.")
 
     if "screener_results" in st.session_state and st.session_state["screener_results"]:
         st.subheader("Top Picks from Last Scan")
@@ -987,11 +1110,28 @@ Min signals: **12/17** · Min score: **65** · Min R:R: **2.0×** · ADX: **≥ 
         else:
             st.error(f"Market Regime: **BEARISH** — Nifty {_conf_regime['nifty_close']:,} below 200-MA {_conf_regime['nifty_ma200']:,}. Signals suppressed.")
 
+    # ── Analysis date picker ──────────────────────────────────────────────────
+    _adate_col1, _adate_col2 = st.columns([2, 3])
+    with _adate_col1:
+        _analysis_date = st.date_input(
+            "📅 Analysis Date",
+            value=date.today(),
+            max_value=date.today(),
+            key="conf_analysis_date",
+            help="Today = live scan. Pick any past date to see which stocks gave a confirmed breakout on that day.",
+        )
+    _as_of_str = _analysis_date.strftime("%Y-%m-%d") if _analysis_date < date.today() else ""
+    with _adate_col2:
+        if _as_of_str:
+            st.info(f"Historical scan — will analyze data **as of {_analysis_date.strftime('%d %b %Y')}**. Note: data for weekends/holidays will use the last available trading day.")
+        else:
+            st.caption("Live scan — shows confirmed breakouts based on today's data.")
+
     col_btn5, col_info5 = st.columns([1, 3])
     with col_btn5:
         conf_btn = st.button("🎯 Run Confirmed Screener", type="primary", use_container_width=True)
     with col_info5:
-        st.caption("Runs independently of the regular screener. Shares the same 6-hr data cache so it's fast after the first run.")
+        st.caption("Shares the 6-hr data cache (fast after first run). Historical dates fetch fresh data and cache separately.")
 
     if conf_btn:
         _conf_progress = st.progress(0)
@@ -1003,22 +1143,28 @@ Min signals: **12/17** · Min score: **65** · Min R:R: **2.0×** · ADX: **≥ 
 
         with st.spinner("Scanning for confirmed breakouts…"):
             _conf_results, _conf_regime_out = run_confirmed_screener(
-                STOCK_UNIVERSE, custom_params, progress_cb=_conf_progress_cb
+                STOCK_UNIVERSE, custom_params, progress_cb=_conf_progress_cb, as_of_date=_as_of_str
             )
 
         _conf_progress.empty()
         _conf_status.empty()
-        st.session_state["confirmed_results"] = _conf_results
-        st.session_state["confirmed_regime"]  = _conf_regime_out
+        st.session_state["confirmed_results"]  = _conf_results
+        st.session_state["confirmed_regime"]   = _conf_regime_out
+        st.session_state["confirmed_as_of"]    = _analysis_date
 
+        _date_label = _analysis_date.strftime("%d %b %Y") if _as_of_str else "today"
         if _conf_results:
-            st.success(f"✅ **{len(_conf_results)} confirmed breakout{'s' if len(_conf_results) != 1 else ''}** passed all 6 gates.")
+            st.success(f"✅ **{len(_conf_results)} confirmed breakout{'s' if len(_conf_results) != 1 else ''}** passed all 6 gates on **{_date_label}**.")
         else:
-            st.warning("No stocks passed all 6 gates today. Market may be extended or in a bearish phase.")
+            st.warning(f"No stocks passed all 6 gates on **{_date_label}**. Market may be extended or in a bearish phase.")
 
     conf_results = st.session_state.get("confirmed_results", [])
 
     if conf_results:
+        _scanned_date = st.session_state.get("confirmed_as_of")
+        if _scanned_date and _scanned_date < date.today():
+            st.caption(f"Results for **{_scanned_date.strftime('%d %b %Y')}** — showing which stocks confirmed a breakout on that date.")
+
         rows5 = []
         for r in conf_results:
             hold = r.get("hold", {})

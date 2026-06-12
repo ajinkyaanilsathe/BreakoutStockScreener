@@ -41,7 +41,7 @@ for _sec, _syms in SECTOR_MAP.items():
         _SYMBOL_TO_SECTOR[_s] = _sec
 
 
-def _build_sector_rs(nifty_20d_return: float) -> dict[str, float]:
+def _build_sector_rs(nifty_20d_return: float, as_of_date: str = "") -> dict[str, float]:
     """
     Compute average 20-day ROC per sector (using up to 5 liquid members).
     Returns {sector: avg_roc} — positive means outperforming direction.
@@ -50,7 +50,7 @@ def _build_sector_rs(nifty_20d_return: float) -> dict[str, float]:
     for sector, members in SECTOR_MAP.items():
         rocs = []
         for sym in members[:5]:
-            df = fetch_stock_data(sym, period="3mo")
+            df = fetch_stock_data(sym, period="3mo", as_of_date=as_of_date)
             if df is None or len(df) < 22:
                 continue
             close = df["Close"].astype(float)
@@ -61,8 +61,8 @@ def _build_sector_rs(nifty_20d_return: float) -> dict[str, float]:
     return sector_roc
 
 
-def check_market_regime() -> dict:
-    df = fetch_market_index(period="1y")
+def check_market_regime(as_of_date: str = "") -> dict:
+    df = fetch_market_index(period="1y", as_of_date=as_of_date)
     if df is None or len(df) < 50:
         log.warning("Could not determine market regime — insufficient Nifty data; defaulting to BULLISH")
         return {"is_bullish": True, "nifty_close": None, "nifty_ma200": None}
@@ -178,14 +178,14 @@ def _hold_suggestion(score: int, adx: float, ut_bot_buy: bool, atr: float, entry
 
 # ── RS rank across universe ───────────────────────────────────────────────────
 
-def compute_rs_ranks(symbols: list) -> dict[str, float]:
+def compute_rs_ranks(symbols: list, as_of_date: str = "") -> dict[str, float]:
     """
     Returns {symbol: percentile_rank} based on 6-month ROC.
     Top 20% → rank >= 80. Uses cached data — fast on second run.
     """
     rocs: dict[str, float] = {}
     for sym in symbols:
-        df = fetch_stock_data(sym, period="1y")
+        df = fetch_stock_data(sym, period="1y", as_of_date=as_of_date)
         if df is None or len(df) < 130:
             continue
         close = df["Close"].astype(float)
@@ -354,8 +354,9 @@ def analyze_stock(
     params: dict,
     sector_rs: dict | None = None,
     rs_rank: float | None = None,
+    as_of_date: str = "",
 ) -> Optional[dict]:
-    df = fetch_stock_data(symbol, period="1y")
+    df = fetch_stock_data(symbol, period="1y", as_of_date=as_of_date)
     if df is None or len(df) < params["min_history_days"]:
         log.warning("%s  SKIP — insufficient data (need %d bars, got %d)",
                     symbol, params["min_history_days"], len(df) if df is not None else 0)
@@ -432,8 +433,8 @@ def analyze_stock(
     }
 
 
-def run_screener(symbols: list, params: dict, progress_cb=None) -> tuple[list, dict]:
-    regime = check_market_regime()
+def run_screener(symbols: list, params: dict, progress_cb=None, as_of_date: str = "") -> tuple[list, dict]:
+    regime = check_market_regime(as_of_date=as_of_date)
     require_bull = params.get("require_bull_market", True)
 
     if require_bull and not regime["is_bullish"]:
@@ -441,7 +442,7 @@ def run_screener(symbols: list, params: dict, progress_cb=None) -> tuple[list, d
         return [], regime
 
     # Pre-fetch Nifty 20-day return for RS comparison
-    nifty_df = fetch_market_index(period="1y")
+    nifty_df = fetch_market_index(period="1y", as_of_date=as_of_date)
     if nifty_df is not None and len(nifty_df) >= 22:
         nifty_close = nifty_df["Close"].astype(float)
         nifty_20d_return = float((nifty_close.iloc[-1] / nifty_close.iloc[-22] - 1) * 100)
@@ -453,12 +454,12 @@ def run_screener(symbols: list, params: dict, progress_cb=None) -> tuple[list, d
     total = len(symbols)
     if progress_cb:
         progress_cb(0.0, "Computing RS Ranks…")
-    rs_ranks = compute_rs_ranks(symbols)
+    rs_ranks = compute_rs_ranks(symbols, as_of_date=as_of_date)
 
     # Phase 2: compute sector RS (uses 5 members per sector from cache)
     if progress_cb:
         progress_cb(0.02, "Computing Sector Strength…")
-    sector_rs = _build_sector_rs(nifty_20d_return)
+    sector_rs = _build_sector_rs(nifty_20d_return, as_of_date=as_of_date)
 
     results = []
     min_signals = params.get("min_signal_count", 9)
@@ -476,7 +477,7 @@ def run_screener(symbols: list, params: dict, progress_cb=None) -> tuple[list, d
             log.debug("%s  SKIP — RS rank %.0f < %.0f", sym, rank, min_rs_rank)
             continue
 
-        result = analyze_stock(sym, params, sector_rs=sector_rs, rs_rank=rank)
+        result = analyze_stock(sym, params, sector_rs=sector_rs, rs_rank=rank, as_of_date=as_of_date)
         if result is None:
             continue
 
@@ -531,6 +532,7 @@ def run_confirmed_screener(
     symbols: list,
     params: dict,
     progress_cb=None,
+    as_of_date: str = "",
 ) -> tuple[list, dict]:
     """
     Stricter screener targeting ~70%+ win-rate.
@@ -542,7 +544,7 @@ def run_confirmed_screener(
         True VCP  OR  BB breakout (price structure required)
     """
     confirmed_params = {**params, **_CONFIRMED_OVERRIDES}
-    results, regime = run_screener(symbols, confirmed_params, progress_cb=progress_cb)
+    results, regime = run_screener(symbols, confirmed_params, progress_cb=progress_cb, as_of_date=as_of_date)
 
     filtered = [
         r for r in results
